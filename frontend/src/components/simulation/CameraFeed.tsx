@@ -1,0 +1,391 @@
+/**
+ * FSOC — Camera Feed
+ * Renders a realistic synthetic camera view:
+ *   - Sky/ground scene with atmospheric gradient
+ *   - Glowing optical beacon (actual point of light that moves)
+ *   - Star-field background (night/dusk scenario)
+ *   - Camera noise texture
+ *   - Detection bounding box with corner brackets
+ *   - Kalman predicted position
+ *   - Tracking reticle (follows camera centre)
+ *   - Angular error indicator
+ *   - HUD overlays
+ */
+import React, { useRef, useEffect } from 'react';
+import type { TelemetryFrame, TargetState } from '../../types/fsoc';
+
+const STATE_COLOR: Record<TargetState, string> = {
+  READY: '#6b7f80', SEARCHING: '#e0a040', DETECTED: '#5fb3c0',
+  ACQUIRING: '#5fb3c0', TRACKING: '#4caf82', LOCKED: '#4caf82',
+  LOST: '#c05050', REACQUIRING: '#e0a040', ERROR: '#c05050',
+};
+
+// Pre-generate a static star field seed so it stays stable
+const STARS = Array.from({ length: 120 }, (_, i) => ({
+  x: ((i * 137.508 + 50) % 640),
+  y: ((i * 97.3 + 30)  % 480),
+  r: 0.4 + (i % 5) * 0.25,
+  a: 0.2 + (i % 7) * 0.1,
+}));
+
+interface Props {
+  frame: TelemetryFrame | null;
+  width?: number;
+  height?: number;
+}
+
+export function CameraFeed({ frame, width = 640, height = 480 }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Smooth beacon pos with lerp to avoid jitter
+  const beaconPos = useRef({ x: 320, y: 240 });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const CX = W / 2;
+    const CY = H / 2;
+
+    const state = (frame?.target_state ?? 'READY') as TargetState;
+    const stateColor = STATE_COLOR[state] ?? '#6b7f80';
+    const isLocked = state === 'LOCKED' || state === 'TRACKING';
+
+    // ── 1. Scene background ──────────────────────────────────
+    // Deep space / dusk sky gradient
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
+    skyGrad.addColorStop(0,   '#05080a');
+    skyGrad.addColorStop(0.4, '#08131a');
+    skyGrad.addColorStop(0.7, '#0c1c14');
+    skyGrad.addColorStop(1,   '#091410');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // Horizon glow (simulate ground reflection / atmosphere)
+    const horizGrad = ctx.createLinearGradient(0, H * 0.6, 0, H);
+    horizGrad.addColorStop(0, 'rgba(0,0,0,0)');
+    horizGrad.addColorStop(1, 'rgba(20,40,30,0.4)');
+    ctx.fillStyle = horizGrad;
+    ctx.fillRect(0, H * 0.6, W, H * 0.4);
+
+    // ── 2. Stars ─────────────────────────────────────────────
+    STARS.forEach(s => {
+      // Slight twinkle using frame_id
+      const twinkle = frame ? 0.6 + 0.4 * Math.sin((frame.frame_id ?? 0) * 0.1 + s.x) : s.a;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200,220,220,${s.a * twinkle})`;
+      ctx.fill();
+    });
+
+    // ── 3. Camera noise texture ──────────────────────────────
+    const noiseLevel = frame?.disturbance?.config?.sensor_noise?.enabled
+      ? (frame.disturbance.config.sensor_noise.noise_level ?? 0.02)
+      : 0.015;
+    if (noiseLevel > 0) {
+      const imgData = ctx.createImageData(W, H);
+      for (let i = 0; i < imgData.data.length; i += 4) {
+        const n = (Math.random() - 0.5) * noiseLevel * 80;
+        imgData.data[i]   = Math.max(0, n);
+        imgData.data[i+1] = Math.max(0, n);
+        imgData.data[i+2] = Math.max(0, n);
+        imgData.data[i+3] = Math.random() < noiseLevel * 3 ? 18 : 0;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+
+    // ── 4. Beacon (the actual moving light source) ───────────
+    const imgPos = frame?.target?.image_position;
+    if (imgPos) {
+      // Lerp for smooth movement
+      beaconPos.current.x += (imgPos.x - beaconPos.current.x) * 0.25;
+      beaconPos.current.y += (imgPos.y - beaconPos.current.y) * 0.25;
+    }
+    const bx = beaconPos.current.x;
+    const by = beaconPos.current.y;
+
+    // Only draw if beacon is within frame
+    if (bx > 0 && bx < W && by > 0 && by < H) {
+      // Outer atmospheric halo
+      const haloR = isLocked ? 28 : 22;
+      const halo = ctx.createRadialGradient(bx, by, 0, bx, by, haloR);
+      halo.addColorStop(0,   isLocked ? 'rgba(120,240,160,0.35)' : 'rgba(100,200,255,0.3)');
+      halo.addColorStop(0.5, isLocked ? 'rgba(80,200,120,0.12)'  : 'rgba(60,160,240,0.1)');
+      halo.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.arc(bx, by, haloR, 0, Math.PI * 2);
+      ctx.fillStyle = halo;
+      ctx.fill();
+
+      // Mid glow ring
+      const midGlow = ctx.createRadialGradient(bx, by, 0, bx, by, 9);
+      midGlow.addColorStop(0,   isLocked ? 'rgba(180,255,200,0.9)' : 'rgba(160,220,255,0.85)');
+      midGlow.addColorStop(0.4, isLocked ? 'rgba(60,220,100,0.6)'  : 'rgba(80,180,255,0.55)');
+      midGlow.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.arc(bx, by, 9, 0, Math.PI * 2);
+      ctx.fillStyle = midGlow;
+      ctx.fill();
+
+      // Core — bright point
+      const coreGrad = ctx.createRadialGradient(bx, by, 0, bx, by, 3);
+      coreGrad.addColorStop(0, '#ffffff');
+      coreGrad.addColorStop(0.5, isLocked ? '#aaffcc' : '#aaddff');
+      coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.arc(bx, by, 3, 0, Math.PI * 2);
+      ctx.fillStyle = coreGrad;
+      ctx.fill();
+
+      // Diffraction spikes (realistic optical artifact)
+      const spikeLen = isLocked ? 18 : 12;
+      const spikeAlpha = isLocked ? 0.55 : 0.35;
+      ctx.strokeStyle = `rgba(200,230,255,${spikeAlpha})`;
+      ctx.lineWidth = 0.8;
+      [0, 90, 45, 135].forEach(angle => {
+        const rad = (angle * Math.PI) / 180;
+        ctx.beginPath();
+        ctx.moveTo(bx + Math.cos(rad) * 2, by + Math.sin(rad) * 2);
+        ctx.lineTo(bx + Math.cos(rad) * spikeLen, by + Math.sin(rad) * spikeLen);
+        ctx.moveTo(bx - Math.cos(rad) * 2, by - Math.sin(rad) * 2);
+        ctx.lineTo(bx - Math.cos(rad) * spikeLen, by - Math.sin(rad) * spikeLen);
+        ctx.stroke();
+      });
+    }
+
+    // ── 5. Atmospheric turbulence shimmer ────────────────────
+    const turbEnabled = frame?.disturbance?.config?.atmospheric_turbulence?.enabled;
+    if (turbEnabled && bx > 0 && bx < W && by > 0 && by < H) {
+      const t = (frame?.elapsed ?? 0) * 8;
+      const shimmerR = 16 + 6 * Math.sin(t * 2.3);
+      ctx.strokeStyle = `rgba(150,200,255,${0.12 + 0.08 * Math.sin(t)})`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.arc(bx + Math.sin(t * 1.7) * 3, by + Math.cos(t * 2.1) * 2, shimmerR, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // ── 6. Detection bounding box ────────────────────────────
+    const det = frame?.detection;
+    if (det) {
+      const dbx = det.bounding_box.x;
+      const dby = det.bounding_box.y;
+      const dbw = det.bounding_box.width;
+      const dbh = det.bounding_box.height;
+      const conf = det.confidence;
+
+      // Filled semi-transparent box
+      ctx.fillStyle = `rgba(62,207,207,${conf * 0.06})`;
+      ctx.fillRect(dbx, dby, dbw, dbh);
+
+      // Box outline
+      ctx.strokeStyle = `rgba(95,179,192,${Math.max(0.4, conf)})`;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(dbx, dby, dbw, dbh);
+
+      // Corner brackets
+      const cs = 10;
+      ctx.strokeStyle = stateColor;
+      ctx.lineWidth = 2;
+      [[dbx, dby, 1, 1], [dbx+dbw, dby, -1, 1], [dbx, dby+dbh, 1, -1], [dbx+dbw, dby+dbh, -1, -1]].forEach(([x, y, sx, sy]) => {
+        ctx.beginPath();
+        ctx.moveTo(x as number, (y as number) + (sy as number) * cs);
+        ctx.lineTo(x as number, y as number);
+        ctx.lineTo((x as number) + (sx as number) * cs, y as number);
+        ctx.stroke();
+      });
+
+      // Centroid dot
+      ctx.beginPath();
+      ctx.arc(det.centroid.x, det.centroid.y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = stateColor;
+      ctx.fill();
+
+      // Confidence badge
+      ctx.fillStyle = 'rgba(8,20,18,0.85)';
+      const badgeW = 52;
+      ctx.fillRect(dbx, dby - 17, badgeW, 14);
+      ctx.fillStyle = `rgba(95,179,192,${conf})`;
+      ctx.font = 'bold 9px "Courier New", monospace';
+      ctx.fillText(`${(conf * 100).toFixed(1)}%`, dbx + 4, dby - 6);
+    }
+
+    // ── 7. Kalman predicted position ─────────────────────────
+    const kal = frame?.kalman;
+    if (kal?.predicted_position) {
+      const kx = kal.predicted_position.x;
+      const ky = kal.predicted_position.y;
+      if (kx > 4 && kx < W - 4 && ky > 4 && ky < H - 4) {
+        ctx.strokeStyle = 'rgba(224,160,64,0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(kx, ky, 14, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(kx - 5, ky); ctx.lineTo(kx + 5, ky);
+        ctx.moveTo(kx, ky - 5); ctx.lineTo(kx, ky + 5);
+        ctx.strokeStyle = 'rgba(224,160,64,0.9)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Velocity vector from Kalman
+        if (kal.velocity && det) {
+          const vscale = 0.4;
+          const vx = (kal.velocity as {x:number;y:number}).x * vscale;
+          const vy = (kal.velocity as {x:number;y:number}).y * vscale;
+          if (Math.abs(vx) + Math.abs(vy) > 1) {
+            ctx.strokeStyle = 'rgba(224,160,64,0.5)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(kx, ky);
+            ctx.lineTo(kx + vx * 6, ky + vy * 6);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    // ── 8. Pan/tilt tracking reticle (camera centre) ─────────
+    const errMag = frame ? Math.min((frame.angular_error?.total_error ?? 0) / 20, 1) : 0;
+    const reticleColor = errMag > 0.4
+      ? `rgba(192,80,80,0.7)` : errMag > 0.15
+      ? `rgba(224,160,64,0.7)` : `rgba(62,207,207,0.6)`;
+
+    // Outer circle
+    ctx.strokeStyle = reticleColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(CX, CY, 32, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner circle
+    ctx.beginPath();
+    ctx.arc(CX, CY, 8, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Cross hairs (four segments with gap)
+    ctx.lineWidth = 1;
+    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx, dy]) => {
+      ctx.beginPath();
+      ctx.moveTo(CX + (dx as number)*12, CY + (dy as number)*12);
+      ctx.lineTo(CX + (dx as number)*44, CY + (dy as number)*44);
+      ctx.stroke();
+    });
+
+    // Centre dot
+    ctx.beginPath();
+    ctx.arc(CX, CY, 2, 0, Math.PI * 2);
+    ctx.fillStyle = reticleColor;
+    ctx.fill();
+
+    // Angular error arc around reticle
+    if (errMag > 0.01) {
+      const arcColor = errMag > 0.4 ? '#c05050' : errMag > 0.15 ? '#e0a040' : '#4caf82';
+      ctx.strokeStyle = arcColor + 'aa';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(CX, CY, 40, -Math.PI / 2, -Math.PI / 2 + errMag * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // ── 9. Scanline overlay ──────────────────────────────────
+    for (let sy = 0; sy < H; sy += 3) {
+      ctx.fillStyle = 'rgba(0,0,0,0.06)';
+      ctx.fillRect(0, sy, W, 1);
+    }
+
+    // ── 10. HUD overlays ─────────────────────────────────────
+    const hudFont    = '10px "Courier New", monospace';
+    const hudFontSm  = '9px "Courier New", monospace';
+    const hudFontB   = 'bold 11px "Courier New", monospace';
+
+    // TOP-LEFT — target state
+    ctx.fillStyle = 'rgba(4,12,10,0.82)';
+    ctx.fillRect(8, 8, 196, 22);
+    ctx.fillStyle = stateColor;
+    ctx.font = hudFontB;
+    ctx.fillText(`● ${state}`, 14, 23);
+
+    // TOP-RIGHT — mission ID
+    ctx.fillStyle = 'rgba(4,12,10,0.82)';
+    ctx.fillRect(W - 136, 8, 128, 22);
+    ctx.fillStyle = 'rgba(62,207,207,0.7)';
+    ctx.font = hudFont;
+    ctx.textAlign = 'right';
+    ctx.fillText('FSOC-DEMO-042', W - 12, 23);
+    ctx.textAlign = 'left';
+
+    // BOTTOM-LEFT — FPS + detector
+    const fps = frame?.metrics?.fps?.toFixed(1) ?? '—';
+    const det_model = frame?.detection?.detector?.toUpperCase() ?? 'NO DETECT';
+    ctx.fillStyle = 'rgba(4,12,10,0.82)';
+    ctx.fillRect(8, H - 38, 130, 30);
+    ctx.fillStyle = '#8a9ba0';
+    ctx.font = hudFont;
+    ctx.fillText(`${fps} FPS`, 14, H - 24);
+    ctx.font = hudFontSm;
+    ctx.fillText(det_model, 14, H - 12);
+
+    // BOTTOM-RIGHT — angular error
+    if (frame) {
+      const pe = frame.angular_error?.pan_error?.toFixed(3) ?? '—';
+      const te = frame.angular_error?.tilt_error?.toFixed(3) ?? '—';
+      const tot = frame.angular_error?.total_error?.toFixed(3) ?? '—';
+      ctx.fillStyle = 'rgba(4,12,10,0.82)';
+      ctx.fillRect(W - 148, H - 50, 140, 42);
+      ctx.fillStyle = '#8a9ba0';
+      ctx.font = hudFontSm;
+      ctx.textAlign = 'right';
+      ctx.fillText(`PAN   ${pe}°`, W - 12, H - 36);
+      ctx.fillText(`TILT  ${te}°`, W - 12, H - 24);
+      const errClr = parseFloat(tot) > 2 ? '#c05050' : parseFloat(tot) > 0.5 ? '#e0a040' : '#4caf82';
+      ctx.fillStyle = errClr;
+      ctx.font = hudFont;
+      ctx.fillText(`ERR  ${tot}°`, W - 12, H - 10);
+      ctx.textAlign = 'left';
+    }
+
+    // TOP-CENTER — elapsed + frame
+    if (frame) {
+      const elapsed = frame.elapsed?.toFixed(1) ?? '0.0';
+      const fid = frame.frame_id ?? 0;
+      ctx.fillStyle = 'rgba(4,12,10,0.75)';
+      ctx.fillRect(CX - 64, 8, 128, 22);
+      ctx.fillStyle = 'rgba(140,160,160,0.8)';
+      ctx.font = hudFontSm;
+      ctx.textAlign = 'center';
+      ctx.fillText(`T+${elapsed}s  F:${fid}`, CX, 23);
+      ctx.textAlign = 'left';
+    }
+
+    // FOV border vignette
+    const vign = ctx.createRadialGradient(CX, CY, Math.min(W,H)*0.35, CX, CY, Math.min(W,H)*0.72);
+    vign.addColorStop(0, 'rgba(0,0,0,0)');
+    vign.addColorStop(1, 'rgba(0,0,0,0.55)');
+    ctx.fillStyle = vign;
+    ctx.fillRect(0, 0, W, H);
+
+    // Frame border
+    ctx.strokeStyle = 'rgba(62,207,207,0.18)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(2, 2, W-4, H-4);
+
+  }, [frame]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={width}
+      height={height}
+      className="camera-feed-canvas"
+      aria-label="Synthetic camera feed"
+    />
+  );
+}

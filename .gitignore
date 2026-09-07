@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+**/node_modules/
+venv/
+**/venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# Build
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# Env and secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+
+# SQLite database (auto-created at runtime)
+ai-service/fsoc_pat.db
+*.db
+*.sqlite
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.sw?
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Large media not part of source
+*.mp4
+*.mov
+*.zip
+
+# Python virtual env
+env/

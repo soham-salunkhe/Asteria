@@ -1,0 +1,335 @@
+/* ─────────────────────────────────────────────
+   MICHIRA — Login Page
+   Shares all .su-* utility classes from SignUpPage.css
+   Only page-specific overrides live here
+   ───────────────────────────────────────────── */
+
+.login-root {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Background — different image, scrim tilted the other way ── */
+.login-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.login-bg-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 45% 35%;
+  filter: saturate(0.65) brightness(0.50);
+  transform: scale(1.04);
+  animation: loginBgBreath 24s ease-in-out infinite alternate;
+}
+
+@keyframes loginBgBreath {
+  from { transform: scale(1.04); }
+  to   { transform: scale(1.09); }
+}
+
+.login-bg-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(255deg,
+      rgba(11, 13, 13, 0.97) 0%,
+      rgba(11, 13, 13, 0.84) 30%,
+      rgba(14, 10,  6, 0.62) 60%,
+      rgba(11, 13, 13, 0.50) 100%),
+    linear-gradient(0deg,
+      rgba(11, 13, 13, 0.95) 0%,
+      rgba(11, 13, 13, 0.00) 36%),
+    linear-gradient(180deg,
+      rgba(11, 13, 13, 0.65) 0%,
+      rgba(11, 13, 13, 0.00) 22%);
+}
+
+.login-bg-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 800px 550px at 32% 52%,
+    rgba(185, 149, 80, 0.11) 0%,
+    transparent 68%
+  );
+}
+
+/* ── Layout — form on LEFT, branding on RIGHT ── */
+.login-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 100vh;
+  max-width: 1360px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 40px;
+  gap: 60px;
+  align-items: center;
+}
+
+/* ── Left panel (form) ── */
+.login-left {
+  padding: 80px 0 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  opacity: 0;
+  animation: suFadeUp 0.9s 0.1s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+/* ── Right panel (branding copy) ── */
+.login-right {
+  padding: 80px 0 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  opacity: 0;
+  animation: suFadeUp 0.9s 0.25s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+.login-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 52px;
+  text-decoration: none;
+  color: var(--ink);
+  width: fit-content;
+}
+
+.login-brand-row:hover .login-brand-name {
+  color: var(--gold-2);
+}
+
+.login-brand-name {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 22px;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--ink);
+  transition: color 0.3s ease;
+}
+
+.login-right-eyebrow {
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gold-2);
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-right-eyebrow .ey-line {
+  width: 28px;
+  height: 1px;
+  background: var(--gold);
+  flex-shrink: 0;
+}
+
+.login-right-headline {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: clamp(36px, 4vw, 56px);
+  line-height: 1.07;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 24px 0;
+  letter-spacing: 0.01em;
+}
+
+.login-right-headline em {
+  color: var(--gold-2);
+  font-style: italic;
+}
+
+.login-right-sub {
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--ink-2);
+  max-width: 400px;
+  margin-bottom: 44px;
+}
+
+/* Quote block */
+.login-quote {
+  border-left: 2px solid rgba(185, 149, 80, 0.4);
+  padding: 12px 0 12px 20px;
+  margin-bottom: 40px;
+}
+
+.login-quote-text {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 18px;
+  font-style: italic;
+  color: var(--ink-2);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.login-quote-attr {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* Temple silhouette strip */
+.login-temple-strip {
+  position: relative;
+  height: 52px;
+  overflow: hidden;
+  opacity: 0.4;
+  margin-top: 8px;
+}
+
+.login-temple-strip svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Remember me row ── */
+.su-remember-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  margin-top: -4px;
+}
+
+.su-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.su-remember input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--gold);
+  cursor: pointer;
+  margin: 0;
+}
+
+.su-forgot {
+  font-size: 12.5px;
+  color: var(--gold-2);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(210, 169, 93, 0.3);
+  transition: border-color 0.2s ease, color 0.2s ease;
+  white-space: nowrap;
+}
+
+.su-forgot:hover {
+  border-color: var(--gold-2);
+  color: var(--ink);
+}
+
+/* ── Signup link row ── */
+.su-signup-row {
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.su-signup-row a {
+  color: var(--gold-2);
+  text-decoration: none;
+  font-weight: 500;
+  margin-left: 4px;
+  border-bottom: 1px solid rgba(210, 169, 93, 0.3);
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.su-signup-row a:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* ── Forgot password panel ── */
+.login-forgot-panel {
+  animation: suFadeUp 0.5s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+.login-back-btn {
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  margin-bottom: 20px;
+  transition: color 0.2s ease;
+  font-family: 'Inter', sans-serif;
+}
+
+.login-back-btn:hover {
+  color: var(--gold-2);
+}
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .login-bg-img,
+  .login-left,
+  .login-right { animation: none !important; opacity: 1 !important; transform: none !important; }
+}
+
+/* ── Responsive ── */
+@media (max-width: 1024px) {
+  .login-layout {
+    grid-template-columns: 1fr;
+    padding: 0 28px;
+    gap: 0;
+  }
+
+  /* On tablet/mobile: form first, branding below */
+  .login-left  { order: 1; padding: 100px 0 8px; }
+  .login-right { order: 2; padding: 8px 0 60px; align-items: center; text-align: center; }
+
+  .login-right-eyebrow { justify-content: center; }
+  .login-right-sub { text-align: center; }
+  .login-brand-row { display: none; }
+  .login-temple-strip { display: none; }
+  .login-quote { border-left: none; border-top: 1px solid rgba(185,149,80,0.2); padding: 16px 0 0; }
+}
+
+@media (max-width: 768px) {
+  .login-layout { padding: 0 16px; }
+
+  .login-left { padding: 88px 0 8px; }
+
+  .signup-card {
+    padding: 32px 24px 28px;
+    border-radius: 16px;
+  }
+
+  .login-right-headline { font-size: 30px; }
+}
+
+@media (max-width: 430px) {
+  .signup-card { padding: 28px 18px 24px; }
+}

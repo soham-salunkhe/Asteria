@@ -1,0 +1,806 @@
+/* ─────────────────────────────────────────────
+   MICHIRA — Sign Up Page
+   Temple-inspired premium heritage aesthetic
+   ───────────────────────────────────────────── */
+
+.signup-root {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Background ── */
+.signup-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.signup-bg-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 60% 40%;
+  filter: saturate(0.7) brightness(0.55);
+  transform: scale(1.04);
+  animation: bgBreath 22s ease-in-out infinite alternate;
+}
+
+@keyframes bgBreath {
+  from { transform: scale(1.04); }
+  to   { transform: scale(1.10); }
+}
+
+/* multi-layer scrim: warm left darkness, bottom vignette, subtle warm tint */
+.signup-bg-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(105deg,
+      rgba(11, 13, 13, 0.96) 0%,
+      rgba(11, 13, 13, 0.82) 30%,
+      rgba(18, 13,  8, 0.65) 58%,
+      rgba(11, 13, 13, 0.55) 100%),
+    linear-gradient(0deg,
+      rgba(11, 13, 13, 0.95) 0%,
+      rgba(11, 13, 13, 0.0)  38%),
+    linear-gradient(180deg,
+      rgba(11, 13, 13, 0.70) 0%,
+      rgba(11, 13, 13, 0.0)  22%);
+}
+
+/* warm golden ambient glow */
+.signup-bg-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 900px 600px at 68% 45%,
+    rgba(185, 149, 80, 0.10) 0%,
+    transparent 70%
+  );
+}
+
+/* ── Layout ── */
+.signup-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 100vh;
+  max-width: 1360px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 40px;
+  gap: 60px;
+  align-items: center;
+}
+
+/* ─────────────────────────────────────────────
+   LEFT PANEL — branding / hero copy
+   ───────────────────────────────────────────── */
+.signup-left {
+  padding: 80px 0 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  opacity: 0;
+  animation: suFadeUp 0.9s 0.1s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+.signup-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 52px;
+  text-decoration: none;
+  color: var(--ink);
+  width: fit-content;
+}
+
+.signup-brand-row:hover .signup-brand-name {
+  color: var(--gold-2);
+}
+
+.signup-brand-name {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 22px;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--ink);
+  transition: color 0.3s ease;
+}
+
+.signup-left-eyebrow {
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--gold-2);
+  margin-bottom: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.signup-left-eyebrow .ey-line {
+  width: 28px;
+  height: 1px;
+  background: var(--gold);
+  flex-shrink: 0;
+}
+
+.signup-left-headline {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: clamp(38px, 4.2vw, 60px);
+  line-height: 1.06;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 24px 0;
+  letter-spacing: 0.01em;
+}
+
+.signup-left-headline em {
+  color: var(--gold-2);
+  font-style: italic;
+}
+
+.signup-left-sub {
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--ink-2);
+  max-width: 400px;
+  margin-bottom: 44px;
+}
+
+/* Feature pills */
+.signup-features {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 48px;
+}
+
+.signup-feature-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.signup-feature-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  flex-shrink: 0;
+}
+
+/* Temple silhouette strip */
+.signup-temple-strip {
+  position: relative;
+  height: 56px;
+  overflow: hidden;
+  margin-top: 8px;
+  opacity: 0.45;
+}
+
+.signup-temple-strip svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ─────────────────────────────────────────────
+   ORNAMENTAL DIVIDER
+   ───────────────────────────────────────────── */
+.su-ornament {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.su-ornament-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(185,149,80,0.35));
+}
+
+.su-ornament-line.right {
+  background: linear-gradient(270deg, transparent, rgba(185,149,80,0.35));
+}
+
+.su-ornament svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ─────────────────────────────────────────────
+   RIGHT PANEL — form card
+   ───────────────────────────────────────────── */
+.signup-right {
+  padding: 80px 0 60px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  opacity: 0;
+  animation: suFadeUp 0.9s 0.25s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+.signup-card {
+  background: rgba(18, 20, 20, 0.75);
+  backdrop-filter: blur(22px) saturate(130%);
+  -webkit-backdrop-filter: blur(22px) saturate(130%);
+  border: 1px solid rgba(185, 149, 80, 0.14);
+  border-radius: 20px;
+  padding: 28px 36px 24px;
+  position: relative;
+  box-shadow:
+    0 40px 80px -20px rgba(0, 0, 0, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.025) inset,
+    0 0 60px -20px rgba(185, 149, 80, 0.08);
+}
+
+/* corner ornaments on the card */
+.su-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  opacity: 0.5;
+}
+.su-corner svg { width: 100%; height: 100%; }
+.su-corner-tl { top:  12px; left:  12px; }
+.su-corner-tr { top:  12px; right: 12px; transform: scaleX(-1); }
+.su-corner-bl { bottom: 12px; left:  12px; transform: scaleY(-1); }
+.su-corner-br { bottom: 12px; right: 12px; transform: scale(-1,-1); }
+
+/* Card heading */
+.signup-card-eyebrow {
+  font-family: 'Inter', sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--gold-2);
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.signup-card-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: center;
+  margin: 0 0 6px 0;
+  letter-spacing: 0.02em;
+}
+
+.signup-card-sub {
+  font-size: 13px;
+  color: var(--ink-3);
+  text-align: center;
+  margin-bottom: 14px;
+}
+
+/* ── Form fields ── */
+.su-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.su-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.su-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.su-field label {
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  text-transform: uppercase;
+}
+
+.su-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.su-input-icon {
+  position: absolute;
+  left: 14px;
+  color: var(--ink-3);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  transition: color 0.25s ease;
+  flex-shrink: 0;
+}
+
+.su-input-wrap:focus-within .su-input-icon {
+  color: var(--gold);
+}
+
+.su-input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(243, 239, 230, 0.12);
+  border-radius: 10px;
+  padding: 10px 14px 10px 42px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ink);
+  font-family: 'Inter', sans-serif;
+  outline: none;
+  transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
+  -webkit-appearance: none;
+}
+
+.su-input::placeholder {
+  color: var(--ink-3);
+  font-weight: 300;
+}
+
+.su-input:focus {
+  border-color: rgba(185, 149, 80, 0.55);
+  background: rgba(185, 149, 80, 0.04);
+  box-shadow: 0 0 0 3px rgba(185, 149, 80, 0.10);
+}
+
+.su-input.error {
+  border-color: rgba(220, 80, 60, 0.55);
+  background: rgba(220, 60, 40, 0.04);
+}
+
+.su-input.error:focus {
+  box-shadow: 0 0 0 3px rgba(220, 60, 40, 0.12);
+}
+
+.su-input.success {
+  border-color: rgba(100, 180, 120, 0.45);
+}
+
+/* password toggle button */
+.su-pw-toggle {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: color 0.2s ease;
+}
+
+.su-pw-toggle:hover {
+  color: var(--ink);
+}
+
+/* input with toggle: reduce right padding */
+.su-input.has-toggle {
+  padding-right: 42px;
+}
+
+/* error message */
+.su-error {
+  font-size: 11.5px;
+  color: #e0604a;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 16px;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.su-error.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Password strength ── */
+.su-strength {
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+.su-strength-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.su-strength-seg {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.4s ease;
+}
+
+.su-strength-seg.weak   { background: #c0392b; }
+.su-strength-seg.fair   { background: #d68910; }
+.su-strength-seg.good   { background: #a8b86a; }
+.su-strength-seg.strong { background: #58a773; }
+
+.su-strength-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: color 0.3s ease;
+}
+.su-strength-label.weak   { color: #e05a4a; }
+.su-strength-label.fair   { color: #d4ac60; }
+.su-strength-label.good   { color: #b5c27a; }
+.su-strength-label.strong { color: #6dba88; }
+
+.su-requirements {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 5px;
+}
+
+.su-req {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  transition: color 0.25s ease;
+}
+
+.su-req.met {
+  color: #6dba88;
+}
+
+.su-req-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  flex-shrink: 0;
+  transition: background 0.25s ease;
+}
+
+.su-req.met .su-req-dot {
+  background: #6dba88;
+}
+
+/* ── Terms checkbox ── */
+.su-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  margin-top: 2px;
+}
+
+.su-checkbox {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--gold);
+  cursor: pointer;
+}
+
+.su-terms-label {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.5;
+}
+
+.su-terms-label a {
+  color: var(--gold-2);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(210, 169, 93, 0.3);
+  transition: border-color 0.2s ease;
+}
+
+.su-terms-label a:hover {
+  border-color: var(--gold-2);
+}
+
+/* ── Submit button ── */
+.su-submit {
+  width: 100%;
+  background: linear-gradient(180deg, var(--gold-2), var(--gold));
+  color: #1a1305;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 12px 22px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow:
+    0 8px 24px -8px rgba(185, 149, 80, 0.55),
+    0 2px 0 rgba(255,255,255,0.07) inset;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, opacity 0.2s ease;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.su-submit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.12) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.su-submit:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow:
+    0 14px 32px -8px rgba(185, 149, 80, 0.65),
+    0 2px 0 rgba(255,255,255,0.07) inset;
+}
+
+.su-submit:active:not(:disabled) {
+  transform: translateY(0px);
+  box-shadow: 0 4px 12px -4px rgba(185, 149, 80, 0.45);
+}
+
+.su-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* spinner */
+@keyframes suSpin {
+  to { transform: rotate(360deg); }
+}
+
+.su-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(26, 19, 5, 0.3);
+  border-top-color: #1a1305;
+  border-radius: 50%;
+  animation: suSpin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ── Divider ── */
+.su-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.su-divider-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(243, 239, 230, 0.08);
+}
+
+.su-divider span {
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* ── Social ── */
+.su-social {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.su-social-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(243, 239, 230, 0.10);
+  border-radius: 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.su-social-btn:hover {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(243, 239, 230, 0.18);
+  color: var(--ink);
+}
+
+/* ── Login link ── */
+.su-login-row {
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.su-login-row a {
+  color: var(--gold-2);
+  text-decoration: none;
+  font-weight: 500;
+  margin-left: 4px;
+  border-bottom: 1px solid rgba(210, 169, 93, 0.3);
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.su-login-row a:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* ─────────────────────────────────────────────
+   SUCCESS STATE
+   ───────────────────────────────────────────── */
+.su-success {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 16px 0 8px;
+  animation: suFadeUp 0.6s cubic-bezier(.2,.8,.2,1) forwards;
+}
+
+.su-success-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(185,149,80,0.18), rgba(185,149,80,0.06));
+  border: 1px solid rgba(185, 149, 80, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+  box-shadow: 0 0 30px -5px rgba(185, 149, 80, 0.35);
+  animation: successPulse 2s ease-in-out infinite;
+}
+
+@keyframes successPulse {
+  0%, 100% { box-shadow: 0 0 30px -5px rgba(185, 149, 80, 0.35); }
+  50%       { box-shadow: 0 0 50px -5px rgba(185, 149, 80, 0.55); }
+}
+
+.su-success-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 28px;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0 0 10px;
+  letter-spacing: 0.02em;
+}
+
+.su-success-sub {
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.65;
+  margin-bottom: 28px;
+}
+
+.su-success-redirect {
+  font-size: 12px;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ─────────────────────────────────────────────
+   ANIMATIONS
+   ───────────────────────────────────────────── */
+@keyframes suFadeUp {
+  from { opacity: 0; transform: translateY(22px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* stagger fields */
+.su-field:nth-child(1) { animation: suFadeUp 0.6s 0.35s cubic-bezier(.2,.8,.2,1) both; }
+.su-field:nth-child(2) { animation: suFadeUp 0.6s 0.42s cubic-bezier(.2,.8,.2,1) both; }
+.su-field:nth-child(3) { animation: suFadeUp 0.6s 0.49s cubic-bezier(.2,.8,.2,1) both; }
+.su-field:nth-child(4) { animation: suFadeUp 0.6s 0.56s cubic-bezier(.2,.8,.2,1) both; }
+.su-field:nth-child(5) { animation: suFadeUp 0.6s 0.63s cubic-bezier(.2,.8,.2,1) both; }
+
+/* ── Reduced motion ── */
+@media (prefers-reduced-motion: reduce) {
+  .signup-bg-img,
+  .signup-left,
+  .signup-right,
+  .su-field,
+  .su-success,
+  .su-success-icon { animation: none !important; opacity: 1 !important; transform: none !important; }
+}
+
+/* ─────────────────────────────────────────────
+   RESPONSIVE
+   ───────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .signup-layout {
+    grid-template-columns: 1fr;
+    padding: 0 28px;
+    gap: 0;
+  }
+
+  .signup-left {
+    padding: 100px 0 16px;
+    align-items: center;
+    text-align: center;
+  }
+
+  .signup-left-eyebrow { justify-content: center; }
+  .signup-left-sub { text-align: center; }
+  .signup-features { align-items: center; }
+  .signup-brand-row { display: none; } /* navbar is already visible */
+  .signup-temple-strip { display: none; }
+
+  .signup-right {
+    padding: 8px 0 60px;
+  }
+}
+
+@media (max-width: 768px) {
+  .signup-layout { padding: 0 16px; }
+
+  .signup-card {
+    padding: 24px 20px 20px;
+    border-radius: 16px;
+  }
+
+  .su-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .signup-left {
+    padding: 88px 0 12px;
+  }
+
+  .signup-left-headline {
+    font-size: 32px;
+  }
+}
+
+@media (max-width: 430px) {
+  .signup-card {
+    padding: 20px 14px 18px;
+  }
+}
