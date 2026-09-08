@@ -87,6 +87,8 @@ class SimulationEngine:
         # Components
         self._env_type: EnvironmentType = 'urban'
         self._target = Target(DEFAULT_TARGET)
+        self._secondary_target: Optional[Target] = None
+        self._multi_target: bool = False
         self._camera = Camera(DEFAULT_CAMERA)
         self._disturbances = DisturbanceEngine()
         self._kalman = KalmanFilter2D(DEFAULT_KALMAN)
@@ -121,6 +123,8 @@ class SimulationEngine:
 
         self._apply_config(config or {})
         self._reset_state()
+        # A new run must never inherit the paused state of the previous one.
+        self._paused = False
         self._demo_mode = demo_mode
         self._demo_phase = 0
         self._demo_phase_start = 0.0
@@ -217,9 +221,23 @@ class SimulationEngine:
             if self._demo_mode:
                 self._run_demo_phase()
 
-            # ── Target update ──────────────────────────────
+            # ── Platform motion & target update ───────────
+            self._camera.update_platform(dt)
             dist_state = self._disturbances.update(dt)
             self._target.update(dt, dist_state['velocity_variation'])
+
+            # Secondary target update if multi-target is enabled
+            sec_dict = None
+            if self._secondary_target:
+                self._secondary_target.update(dt, dist_state['velocity_variation'])
+                sec_proj = self._camera.project_world_to_pixel(self._secondary_target.position)
+                sec_vis = sec_proj is not None and self._secondary_target.visible
+                sec_dict = self._secondary_target.state_dict(now)
+                sec_dict['image_position'] = (
+                    {'x': round(sec_proj[0], 2), 'y': round(sec_proj[1], 2)}
+                    if sec_vis else None
+                )
+                sec_dict['is_primary'] = False
 
             # ── Camera disturbance ─────────────────────────
             if dist_state['dpan'] != 0 or dist_state['dtilt'] != 0:
@@ -229,18 +247,18 @@ class SimulationEngine:
                     dt
                 )
 
-            # ── Project target to pixel space ──────────────
+            # ── Project primary target to pixel space ──────
             proj = self._camera.project_world_to_pixel(self._target.position)
             target_visible = proj is not None and self._target.visible
             px, py = proj if proj else (0.0, 0.0)
 
             # Update target's image_position for telemetry
-            # Use None when target is outside FOV so the frontend shows '—'
             target_dict = self._target.state_dict(now)
             target_dict['image_position'] = (
                 {'x': round(px, 2), 'y': round(py, 2)}
                 if target_visible else None
             )
+            target_dict['is_primary'] = True
 
             # ── Detection ─────────────────────────────────
             detection = self._detector.detect(
@@ -251,6 +269,26 @@ class SimulationEngine:
                 target_visible=target_visible,
             )
             det_dict = detection.to_dict() if detection else None
+
+            # ── Centroiding error (pixel error vs true projected position) ──
+            if detection and target_visible:
+                px_err_x = round(detection.centroid_x - px, 3)
+                px_err_y = round(detection.centroid_y - py, 3)
+                px_err_total = round(math.sqrt(px_err_x**2 + px_err_y**2), 3)
+            else:
+                px_err_x = None
+                px_err_y = None
+                px_err_total = None
+
+            centroid_err_dict = {
+                'pixel_error_x': px_err_x,
+                'pixel_error_y': px_err_y,
+                'pixel_error_total': px_err_total,
+                'centroid_x': round(detection.centroid_x, 2) if detection else None,
+                'centroid_y': round(detection.centroid_y, 2) if detection else None,
+                'target_px_x': round(px, 2) if target_visible else None,
+                'target_px_y': round(py, 2) if target_visible else None,
+            }
 
             # ── Kalman filter ──────────────────────────────
             if detection:
@@ -305,6 +343,7 @@ class SimulationEngine:
                         'tilt_error': round(tilt_err, 4),
                         'total_error': round(total_err, 4),
                     },
+                    'centroiding_error': centroid_err_dict,
                     'metrics': frame_metrics,
                     'kalman': kal_dict,
                     'disturbance': dist_state,
@@ -316,6 +355,10 @@ class SimulationEngine:
                     pass  # non-fatal
 
             # ── Broadcast telemetry ────────────────────────
+            targets_list = [target_dict]
+            if sec_dict:
+                targets_list.append(sec_dict)
+
             telemetry = {
                 'type': 'telemetry',
                 'payload': {
@@ -325,6 +368,8 @@ class SimulationEngine:
                     'sim_status': self.status,
                     'target_state': self._target_state,
                     'target': target_dict,
+                    'targets': targets_list,
+                    'centroiding_error': centroid_err_dict,
                     'camera': self._camera.state_dict(now),
                     'detection': det_dict,
                     'kalman': kal_dict,
@@ -456,6 +501,29 @@ class SimulationEngine:
         else:
             self._target = Target(DEFAULT_TARGET)
 
+        # Multi-target support
+        self._multi_target = bool(config.get('multi_target', False))
+        if self._multi_target:
+            sec_init = Vec3(
+                self._target.config.initial_position.x + 70.0,
+                self._target.config.initial_position.y - 35.0,
+                self._target.config.initial_position.z + 50.0,
+            )
+            self._secondary_target = Target(TargetConfig(
+                id='BEACON-02',
+                initial_position=sec_init,
+                velocity=Vec3(1.6, -0.7, 0.0),
+                trajectory='figure_8' if self._target.config.trajectory != 'figure_8' else 'circular',
+                amplitude_h=self._target.config.amplitude_h * 1.15,
+                amplitude_v=self._target.config.amplitude_v * 0.85,
+                period=self._target.config.period * 1.25,
+            ))
+        else:
+            self._secondary_target = None
+
+        plat_motion = config.get('platform_motion') or (config.get('camera', {}).get('platform_motion', 'stationary'))
+        plat_speed  = float(config.get('platform_speed') or (config.get('camera', {}).get('platform_speed', 2.0)))
+
         if 'camera' in config:
             cc = config['camera']
             self._camera = Camera(CameraConfig(
@@ -465,9 +533,14 @@ class SimulationEngine:
                 resolution_h=cc.get('resolution_h', 480),
                 fps=cc.get('fps', 30.0),
                 noise_level=cc.get('noise_level', 0.02),
+                platform_motion=plat_motion,
+                platform_speed=plat_speed,
             ))
         else:
-            self._camera = Camera(DEFAULT_CAMERA)
+            self._camera = Camera(CameraConfig(
+                platform_motion=plat_motion,
+                platform_speed=plat_speed,
+            ))
 
         if 'disturbances' in config:
             self._disturbances = DisturbanceEngine(
@@ -512,6 +585,8 @@ class SimulationEngine:
 
     def _reset_state(self) -> None:
         self._target.reset()
+        if self._secondary_target:
+            self._secondary_target.reset()
         self._camera.reset()
         self._disturbances.reset()
         self._kalman.reset()

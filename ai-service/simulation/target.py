@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Literal
 
-TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk']
+TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk', 'figure_8']
 
 
 @dataclass
@@ -102,6 +102,16 @@ class Target:
             # True instantaneous velocity
             self._velocity.x = -cfg.amplitude_h * omega * math.sin(omega * t)
             self._velocity.y =  cfg.amplitude_v * omega * math.cos(omega * t)
+
+        elif cfg.trajectory == 'figure_8':
+            # Lissajous figure-8: x = A·sin(ωt), y = B·sin(2ωt + π/2)
+            # Produces a smooth, closed infinity-symbol path.
+            omega = 2.0 * math.pi / cfg.period
+            self._position.x = self._origin.x + cfg.amplitude_h * math.sin(omega * t)
+            self._position.y = self._origin.y + cfg.amplitude_v * math.sin(2 * omega * t + math.pi / 2)
+            # True instantaneous velocity (derivative)
+            self._velocity.x = cfg.amplitude_h * omega * math.cos(omega * t)
+            self._velocity.y = cfg.amplitude_v * 2 * omega * math.cos(2 * omega * t + math.pi / 2)
 
         elif cfg.trajectory == 'random_walk':
             import random

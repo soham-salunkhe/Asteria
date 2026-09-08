@@ -3,17 +3,26 @@
  * Provides simulation state, latest telemetry, event log,
  * and control actions to any component.
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import type { TelemetryFrame, EventLogEntry } from '../types/fsoc';
 import { simulationWS } from '../services/simulationWebSocket';
 import { fsocApi } from '../services/fsocApi';
 
-const MAX_HISTORY = 600;   // ~20s at 30fps
-const MAX_EVENTS  = 200;
+const MAX_HISTORY = 120;   // ~4s at 30fps — avoids memory bloat while preserving smooth charts
+const MAX_EVENTS  = 100;
 
 export type WsStatus = 'connected' | 'disconnected' | 'error';
 
-export function useSimulation() {
+function useSimulationState() {
   const [wsStatus, setWsStatus] = useState<WsStatus>('disconnected');
   const [latest, setLatest]     = useState<TelemetryFrame | null>(null);
   const [history, setHistory]   = useState<TelemetryFrame[]>([]);
@@ -97,4 +106,22 @@ export function useSimulation() {
     updatePID,
     updateCamera,
   };
+}
+
+type SimulationContextValue = ReturnType<typeof useSimulationState>;
+
+const SimulationContext = createContext<SimulationContextValue | null>(null);
+
+/** Keeps one telemetry connection and one shared state for the entire app. */
+export function SimulationProvider({ children }: { children: ReactNode }) {
+  const simulation = useSimulationState();
+  return createElement(SimulationContext.Provider, { value: simulation }, children);
+}
+
+export function useSimulation(): SimulationContextValue {
+  const simulation = useContext(SimulationContext);
+  if (!simulation) {
+    throw new Error('useSimulation must be used inside <SimulationProvider>');
+  }
+  return simulation;
 }

@@ -10,7 +10,7 @@ import json
 import time
 from typing import Optional, Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
@@ -20,6 +20,7 @@ from database import models as db
 from reports.csv_report import generate_csv
 from reports.json_report import generate_json
 from reports.pdf_report import generate_pdf
+from vision.video_processor import video_processor
 
 # ── Boot DB ───────────────────────────────────────────────────
 db.init_db()
@@ -64,8 +65,9 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Register the broadcast function on the engine
+# Register the broadcast function on both engine and video_processor
 engine.set_broadcast(manager.broadcast)
+video_processor.set_broadcast(manager.broadcast)
 
 
 # ── Pydantic request models ───────────────────────────────────
@@ -198,6 +200,52 @@ def get_run(run_id: str):
         raise HTTPException(404, 'Run not found')
     telemetry = db.get_telemetry(run_id, limit=2000)
     return {'success': True, 'data': r, 'telemetry': telemetry}
+
+
+# ── Video input (Benchmark 2) ────────────────────────────
+
+@app.post('/api/simulation/upload-video')
+async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    """
+    Accepts an MP4 video file and processes it through the tracking pipeline.
+    The virtual PTZ camera is bypassed; frames are fed directly into the
+    detection + Kalman + PID pipeline.  Results are streamed via WebSocket
+    exactly like the virtual simulation.
+    """
+    import tempfile, os, shutil
+    # Stop any running virtual simulation first
+    if engine.status == 'running':
+        await engine.stop()
+
+    # Save upload to a temp file
+    suffix = os.path.splitext(file.filename or 'video.mp4')[1] or '.mp4'
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        shutil.copyfileobj(file.file, tmp)
+        tmp.close()
+        tmp_path = tmp.name
+    finally:
+        file.file.close()
+
+    # Schedule background processing
+    orig_name = file.filename or 'uploaded_video.mp4'
+    async def _run():
+        try:
+            run_id = await video_processor.process(tmp_path, scenario_name=f'VIDEO-{orig_name}')
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    background_tasks.add_task(_run)
+    # Return immediately; frontend connects via WebSocket for progress
+    return {
+        'success': True,
+        'message': 'Video processing started',
+        'run_id': None,  # will be emitted via WS once processing begins
+        'filename': file.filename,
+    }
 
 
 # ── Reports ───────────────────────────────────────────────────

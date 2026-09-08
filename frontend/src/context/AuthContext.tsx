@@ -14,7 +14,7 @@ import {
   browserSessionPersistence,
   setPersistence,
 } from 'firebase/auth';
-import { auth } from '../firebase/firebase';
+import { auth, demoMode } from '../firebase/firebase';
 
 // ─── Context shape ────────────────────────────────────────────────────────────
 // Backwards-compatible: keeps login() / logout() / isLoggedIn so every
@@ -51,11 +51,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser]               = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser]               = useState<User | null>(
+    demoMode ? ({ displayName: 'Demo Operator', email: 'demo@local' } as User) : null,
+  );
+  const [authLoading, setAuthLoading] = useState(!demoMode);
 
   // Subscribe to Firebase auth state — single source of truth
   useEffect(() => {
+    if (demoMode) return;
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setAuthLoading(false);
@@ -73,11 +76,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const logout = useCallback(async () => {
+    if (demoMode) return;
     await signOut(auth);
     // onAuthStateChanged will fire and set user → null automatically
   }, []);
 
   const setPersistenceMode = useCallback(async (remember: boolean) => {
+    if (demoMode) return;
     await setPersistence(
       auth,
       remember ? browserLocalPersistence : browserSessionPersistence,

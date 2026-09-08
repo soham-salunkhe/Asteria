@@ -13,9 +13,11 @@ DB_PATH = Path(__file__).parent.parent / 'fsoc_pat.db'
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.execute('PRAGMA temp_store=MEMORY')
     conn.execute('PRAGMA foreign_keys=ON')
     return conn
 
@@ -79,6 +81,20 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_started
             ON simulation_runs(started_at DESC);
     """)
+    # Ensure new PS4 performance columns exist
+    for col in ('lost_count INTEGER', 'reacquisition_count INTEGER',
+                'avg_reacquisition_time REAL', 'max_reacquisition_time REAL'):
+        try:
+            conn.execute(f"ALTER TABLE simulation_runs ADD COLUMN {col}")
+        except Exception:
+            pass
+    # Ensure centroiding error columns exist in telemetry_samples
+    for col in ('pixel_error_x REAL', 'pixel_error_y REAL', 'pixel_error_total REAL',
+                'centroid_x REAL', 'centroid_y REAL', 'target_px_x REAL', 'target_px_y REAL'):
+        try:
+            conn.execute(f"ALTER TABLE telemetry_samples ADD COLUMN {col}")
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 
@@ -144,13 +160,17 @@ def complete_run(run_id: str, summary: dict, final_state: str, status: str = 'co
         """UPDATE simulation_runs SET
            ended_at=?, duration=?, acquisition_time=?, average_error=?,
            max_error=?, lock_retention=?, avg_fps=?, processing_ms=?,
-           detection_confidence=?, final_state=?, status=?
+           detection_confidence=?, final_state=?, status=?,
+           lost_count=?, reacquisition_count=?, avg_reacquisition_time=?, max_reacquisition_time=?
            WHERE run_id=?""",
         (now, summary.get('duration'), summary.get('acquisition_time'),
          summary.get('average_error'), summary.get('max_error'),
          summary.get('lock_retention'), summary.get('avg_fps'),
          summary.get('avg_processing_ms'), summary.get('detection_confidence'),
-         final_state, status, run_id)
+         final_state, status,
+         summary.get('lost_count', 0), summary.get('reacquisition_count', 0),
+         summary.get('avg_reacquisition_time'), summary.get('max_reacquisition_time'),
+         run_id)
     )
     conn.commit()
     conn.close()
@@ -162,7 +182,8 @@ def list_runs(limit: int = 50) -> list[dict]:
         """SELECT run_id, scenario_name, environment, started_at,
                   duration, acquisition_time, average_error, max_error,
                   lock_retention, avg_fps, processing_ms,
-                  detection_confidence, final_state, status
+                  detection_confidence, final_state, status,
+                  lost_count, reacquisition_count, avg_reacquisition_time, max_reacquisition_time
            FROM simulation_runs
            ORDER BY started_at DESC LIMIT ?""",
         (limit,)
@@ -189,6 +210,7 @@ def save_telemetry_sample(run_id: str, frame: dict, frame_id: int) -> None:
     met = frame.get('metrics', {})
     kal = frame.get('kalman') or {}
     dis = frame.get('disturbance', {})
+    c_err = frame.get('centroiding_error', {})
     kal_pos = kal.get('position', {}) if kal else {}
 
     conn = get_conn()
@@ -196,8 +218,9 @@ def save_telemetry_sample(run_id: str, frame: dict, frame_id: int) -> None:
         """INSERT INTO telemetry_samples
            (run_id, timestamp, frame_id, elapsed, target_state,
             pan, tilt, pan_error, tilt_error, total_error,
-            confidence, fps, processing_ms, kalman_x, kalman_y, disturbance_idx)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            confidence, fps, processing_ms, kalman_x, kalman_y, disturbance_idx,
+            pixel_error_x, pixel_error_y, pixel_error_total, centroid_x, centroid_y, target_px_x, target_px_y)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (run_id, frame.get('timestamp', time.time()), frame_id,
          frame.get('elapsed', 0),
          frame.get('target_state', 'UNKNOWN'),
@@ -205,7 +228,10 @@ def save_telemetry_sample(run_id: str, frame: dict, frame_id: int) -> None:
          err.get('pan_error', 0), err.get('tilt_error', 0), err.get('total_error', 0),
          met.get('detection_confidence', 0), met.get('fps', 0), met.get('processing_ms', 0),
          kal_pos.get('x', 0), kal_pos.get('y', 0),
-         dis.get('total_disturbance_index', 0))
+         dis.get('total_disturbance_index', 0),
+         c_err.get('pixel_error_x'), c_err.get('pixel_error_y'), c_err.get('pixel_error_total'),
+         c_err.get('centroid_x'), c_err.get('centroid_y'),
+         c_err.get('target_px_x'), c_err.get('target_px_y'))
     )
     conn.commit()
     conn.close()

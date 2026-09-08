@@ -11,12 +11,16 @@ import { TargetStateIndicator } from '../../components/telemetry/TargetStateIndi
 import { EventLog } from '../../components/telemetry/EventLog';
 import type { TargetState } from '../../types/fsoc';
 
-type ViewMode = 'camera' | '3d' | 'dual';
+type ViewMode  = 'camera' | '3d';
+type AtmosMode = 'clear' | 'haze' | 'fog' | 'rain' | 'low_light';
+type NoiseMode = 'gaussian' | 'salt_pepper' | 'poisson' | 'none';
 
 export function LiveTrackingPage() {
   const sim = useSimulation();
-  const [viewMode, setViewMode] = useState<ViewMode>('dual');
-  const [starting, setStarting] = useState(false);
+  const [viewMode,   setViewMode]   = useState<ViewMode>('camera');
+  const [starting,   setStarting]   = useState(false);
+  const [atmosMode,  setAtmosMode]  = useState<AtmosMode>('clear');
+  const [noiseMode,  setNoiseMode]  = useState<NoiseMode>('gaussian');
 
   const f = sim.latest;
   const cam   = f?.camera;
@@ -36,7 +40,7 @@ export function LiveTrackingPage() {
       {/* ── Hero viewport ─────────────────────────────────── */}
       <div className="tracking-viewport">
 
-        {/* View toggle */}
+        {/* View toggle + atmosphere/noise controls */}
         <div className="viewport-toggle">
           {!sim.latest && (
             <button
@@ -51,12 +55,6 @@ export function LiveTrackingPage() {
             </button>
           )}
           <button
-            className={`vp-btn${viewMode === 'dual' ? ' vp-btn--active' : ''}`}
-            onClick={() => setViewMode('dual')}
-          >
-            ⚡ Dual View (Both)
-          </button>
-          <button
             className={`vp-btn${viewMode === 'camera' ? ' vp-btn--active' : ''}`}
             onClick={() => setViewMode('camera')}
           >
@@ -68,6 +66,32 @@ export function LiveTrackingPage() {
           >
             3-D View
           </button>
+
+          {/* Atmospheric mode selector */}
+          <span className="vp-sep" />
+          {(['clear','haze','fog','rain','low_light'] as AtmosMode[]).map(m => (
+            <button
+              key={m}
+              className={`vp-btn vp-btn--sm${atmosMode === m ? ' vp-btn--active' : ''}`}
+              onClick={() => setAtmosMode(m)}
+              title={`Atmospheric: ${m}`}
+            >
+              {m === 'clear' ? '☀' : m === 'haze' ? '🌫' : m === 'fog' ? '🌁' : m === 'rain' ? '🌧' : '🌑'}
+            </button>
+          ))}
+
+          {/* Noise mode selector */}
+          <span className="vp-sep" />
+          {([['G','gaussian'],['S','salt_pepper'],['P','poisson'],['✕','none']] as [string, NoiseMode][]).map(([label, mode]) => (
+            <button
+              key={mode}
+              className={`vp-btn vp-btn--sm${noiseMode === mode ? ' vp-btn--active' : ''}`}
+              onClick={() => setNoiseMode(mode)}
+              title={`Noise: ${mode}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* State overlay */}
@@ -77,19 +101,8 @@ export function LiveTrackingPage() {
 
         {/* Viewport */}
         <div className="viewport-canvas">
-          {viewMode === 'dual' ? (
-            <div className="viewport-dual-grid">
-              <div className="dual-pane dual-pane--camera">
-                <div className="dual-pane-badge">NORMAL OPTICAL FEED (2D VIEW)</div>
-                <CameraFeed frame={f} width={640} height={480} />
-              </div>
-              <div className="dual-pane dual-pane--3d">
-                <div className="dual-pane-badge">SATELLITE DIGITAL TWIN (3D SCENE)</div>
-                <SimulationViewport frame={f} history={sim.history} />
-              </div>
-            </div>
-          ) : viewMode === 'camera' ? (
-            <CameraFeed frame={f} width={960} height={720} />
+          {viewMode === 'camera' ? (
+            <CameraFeed frame={f} width={640} height={480} atmosMode={atmosMode} noiseMode={noiseMode} />
           ) : (
             <SimulationViewport frame={f} history={sim.history} />
           )}

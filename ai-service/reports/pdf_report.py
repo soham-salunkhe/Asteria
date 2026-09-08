@@ -158,17 +158,90 @@ def generate_pdf(run_id: str) -> bytes:
 
     status = run.get('final_state', '')
     lock_ret = run.get('lock_retention', 0) or 0
+    avg_reacq = run.get('avg_reacquisition_time')
+    avg_reacq_str = f"{avg_reacq:.3f} s" if avg_reacq else "—"
+    max_reacq = run.get('max_reacquisition_time')
+    max_reacq_str = f"{max_reacq:.3f} s" if max_reacq else "—"
+
+    dur = run.get('duration') or 0.0
+    fps_val = run.get('avg_fps') or 0.0
+    avg_err_val = run.get('average_error') or 0.0
+    max_err_val = run.get('max_error') or 0.0
+    proc_ms_val = run.get('processing_ms') or 0.0
+    det_conf = (run.get('detection_confidence') or 0.0) * 100
 
     content.append(kv_table([
-        ('Duration', f"{run.get('duration', 0):.2f} s"),
-        ('Average FPS', f"{run.get('avg_fps', 0):.1f}"),
-        ('Acquisition Time', acq_str),
-        ('Average Tracking Error', f"{run.get('average_error', 0):.4f}°"),
-        ('Maximum Tracking Error', f"{run.get('max_error', 0):.4f}°"),
-        ('Lock Retention', f"{lock_ret:.2f}%"),
-        ('Detection Confidence', f"{(run.get('detection_confidence', 0) or 0) * 100:.1f}%"),
-        ('Avg Processing Latency', f"{run.get('processing_ms', 0):.2f} ms"),
+        ('Duration',               f"{dur:.2f} s"),
+        ('Average FPS',            f"{fps_val:.1f}"),
+        ('Acquisition Time',       acq_str),
+        ('Avg Re-acquisition Time', avg_reacq_str),
+        ('Max Re-acquisition Time', max_reacq_str),
+        ('Average Tracking Error', f"{avg_err_val:.4f}°"),
+        ('Maximum Tracking Error', f"{max_err_val:.4f}°"),
+        ('Lock Retention',         f"{lock_ret:.2f}%"),
+        ('Target Loss Count',      str(run.get('lost_count') or '—')),
+        ('Re-acquisition Count',   str(run.get('reacquisition_count') or '—')),
+        ('Detection Confidence',   f"{det_conf:.1f}%"),
+        ('Avg Processing Latency', f"{proc_ms_val:.2f} ms"),
+        ('Total Frames',           str(run.get('total_frames') or '—')),
     ]))
+
+    # PS4 Compliance Table
+    content.append(Spacer(1, 6))
+    content.append(section('3. PS4 Spec Compliance'))
+    avg_err_deg = run.get('average_error', 0) or 0
+    max_err_deg = run.get('max_error', 0) or 0
+    avg_fps_val = run.get('avg_fps', 0) or 0
+    proc_ms_val = run.get('processing_ms', 0) or 0
+
+    def spec_row(param, req, actual, passed):
+        color = SUCCESS if passed else ERROR_C
+        return [
+            Paragraph(param, mono_style),
+            Paragraph(req, body_style),
+            Paragraph(actual, ParagraphStyle('SpecVal', parent=body_style, textColor=color)),
+            Paragraph('PASS' if passed else 'FAIL',
+                      ParagraphStyle('SpecStatus', parent=body_style,
+                                     textColor=SUCCESS if passed else ERROR_C,
+                                     fontName='Helvetica-Bold')),
+        ]
+
+    # Convert degrees to approximate pixels (1° ≈ 22.7px at 640×480, 28° FOV)
+    px_per_deg = 640 / 28.0
+    avg_err_px = avg_err_deg * px_per_deg
+    max_err_px = max_err_deg * px_per_deg
+
+    spec_data = [
+        [Paragraph('Parameter', mono_style), Paragraph('Requirement', body_style),
+         Paragraph('Actual', body_style), Paragraph('Status', body_style)],
+        spec_row('Acquisition Time', '≤ 2.0 s', acq_str,
+                 acq is not None and acq <= 2.0),
+        spec_row('Avg Tracking Error', '≤ 10 px', f"{avg_err_px:.1f} px",
+                 avg_err_px <= 10.0),
+        spec_row('Re-acquisition Time', '≤ 1.0 s', avg_reacq_str,
+                 avg_reacq is None or avg_reacq <= 1.0),
+        spec_row('Lock Retention', '> 95%', f"{lock_ret:.1f}%",
+                 lock_ret >= 95.0),
+        spec_row('Processing Speed', '≥ 20 FPS', f"{avg_fps_val:.1f} FPS",
+                 avg_fps_val >= 20.0),
+        spec_row('Proc Latency (50 ms budget)', '≤ 50 ms', f"{proc_ms_val:.1f} ms",
+                 proc_ms_val <= 50.0),
+    ]
+    spec_table = Table(spec_data, colWidths=[50*mm, 40*mm, 40*mm, 25*mm])
+    spec_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#111818')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), CYAN_ACCENT),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1),
+         [colors.HexColor('#131c1c'), colors.HexColor('#0e1515')]),
+        ('GRID', (0, 0), (-1, -1), 0.3, BORDER),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    content.append(spec_table)
 
     # Error statistics
     if samples:
@@ -178,15 +251,16 @@ def generate_pdf(run_id: str) -> bytes:
         p95 = sorted_e[int(len(sorted_e) * 0.95)] if sorted_e else 0
 
         content.append(Spacer(1, 6))
-        content.append(section('3. Error Statistics'))
+        content.append(section('4. Error Statistics'))
         content.append(kv_table([
-            ('Mean Error', f"{sum(errors)/len(errors):.4f}°"),
-            ('Median Error', f"{sorted_e[len(sorted_e)//2]:.4f}°"),
-            ('95th Percentile Error', f"{p95:.4f}°"),
-            ('Peak Error', f"{max(errors):.4f}°"),
-            ('% Frames Locked', f"{pct_locked:.1f}%"),
+            ('Mean Error',           f"{sum(errors)/len(errors):.4f}°"),
+            ('Median Error',         f"{sorted_e[len(sorted_e)//2]:.4f}°"),
+            ('95th Percentile Error',f"{p95:.4f}°"),
+            ('Peak Error',           f"{max(errors):.4f}°"),
+            ('% Frames Locked',      f"{pct_locked:.1f}%"),
             ('Total Frames Sampled', str(len(samples))),
         ]))
+
 
     # Footer
     content.append(Spacer(1, 12))

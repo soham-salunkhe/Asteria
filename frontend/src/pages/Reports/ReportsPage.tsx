@@ -18,6 +18,10 @@ interface RunRecord {
   avg_fps: number;
   final_state: string;
   status: string;
+  lost_count?: number;
+  reacquisition_count?: number;
+  avg_reacquisition_time?: number | null;
+  max_reacquisition_time?: number | null;
 }
 
 function ts(v: number) {
@@ -102,6 +106,9 @@ export function ReportsPage() {
                   ['Duration',    `${selected.duration?.toFixed(2) ?? '—'} s`],
                   ['Acq Time',    selected.acquisition_time != null
                                     ? `${selected.acquisition_time.toFixed(3)} s` : '—'],
+                  ['Re-acq Time', selected.avg_reacquisition_time != null
+                                    ? `${selected.avg_reacquisition_time.toFixed(3)} s` : '—'],
+                  ['Lost / Reacq', `${selected.lost_count ?? 0} / ${selected.reacquisition_count ?? 0}`],
                   ['Avg Error',   `${selected.average_error?.toFixed(4) ?? '—'} °`],
                   ['Max Error',   `${selected.max_error?.toFixed(4) ?? '—'} °`],
                   ['Lock Ret.',   `${selected.lock_retention?.toFixed(2) ?? '—'} %`],

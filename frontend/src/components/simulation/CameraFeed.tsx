@@ -28,13 +28,70 @@ const STARS = Array.from({ length: 120 }, (_, i) => ({
   a: 0.2 + (i % 7) * 0.1,
 }));
 
+// ── Fast Zero-Allocation Noise Pool (GPU Canvas Blit) ────────
+const NOISE_W = 160;
+const NOISE_H = 120;
+const GAUSSIAN_NOISE_POOL: HTMLCanvasElement[] = [];
+const POISSON_NOISE_POOL: HTMLCanvasElement[] = [];
+
+function createNoisePattern(type: 'gaussian' | 'poisson'): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = NOISE_W;
+  c.height = NOISE_H;
+  const ctx = c.getContext('2d');
+  if (!ctx) return c;
+  const img = ctx.createImageData(NOISE_W, NOISE_H);
+  const d = img.data;
+
+  if (type === 'poisson') {
+    for (let i = 0; i < d.length; i += 4) {
+      const u1 = Math.random() || 1e-10;
+      const u2 = Math.random();
+      const n = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2) * 22;
+      const v = Math.min(255, Math.max(0, Math.round(n)));
+      d[i] = v; d[i+1] = v; d[i+2] = v;
+      d[i+3] = v > 6 ? Math.min(160, v * 2) : 0;
+    }
+  } else {
+    // Gaussian
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.min(255, Math.max(0, Math.round((Math.random() - 0.5) * 70 + 35)));
+      d[i] = v; d[i+1] = v; d[i+2] = v;
+      d[i+3] = Math.random() < 0.25 ? 120 : 0;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+function getNoisePool(type: 'gaussian' | 'poisson'): HTMLCanvasElement[] {
+  const pool = type === 'gaussian' ? GAUSSIAN_NOISE_POOL : POISSON_NOISE_POOL;
+  if (pool.length === 0) {
+    for (let i = 0; i < 4; i++) {
+      pool.push(createNoisePattern(type));
+    }
+  }
+  return pool;
+}
+
 interface Props {
   frame: TelemetryFrame | null;
   width?: number;
   height?: number;
+  /** Atmospheric visual mode — drives overlay effect */
+  atmosMode?: 'clear' | 'haze' | 'fog' | 'rain' | 'low_light';
+  noiseMode?: 'gaussian' | 'salt_pepper' | 'poisson' | 'none';
+  /** Beacon shape — PS4 default is square */
+  beaconShape?: 'square' | 'circle';
+  /** Beacon size in pixels (PS4 spec: 5–20px, default 10) */
+  beaconSize?: number;
 }
 
-export function CameraFeed({ frame, width = 640, height = 480 }: Props) {
+export function CameraFeed({
+  frame, width = 640, height = 480,
+  atmosMode = 'clear', noiseMode = 'gaussian',
+  beaconShape = 'square', beaconSize = 10,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   // Smooth beacon pos with lerp to avoid jitter
   const beaconPos = useRef({ x: 320, y: 240 });
@@ -81,35 +138,55 @@ export function CameraFeed({ frame, width = 640, height = 480 }: Props) {
       ctx.fill();
     });
 
-    // ── 3. Camera noise texture ──────────────────────────────
+    // ── 3. Camera noise texture (Zero-allocation GPU-accelerated blit) ──
     const noiseLevel = frame?.disturbance?.config?.sensor_noise?.enabled
       ? (frame.disturbance.config.sensor_noise.noise_level ?? 0.02)
       : 0.015;
-    if (noiseLevel > 0) {
-      const imgData = ctx.createImageData(W, H);
-      for (let i = 0; i < imgData.data.length; i += 4) {
-        const n = (Math.random() - 0.5) * noiseLevel * 80;
-        imgData.data[i]   = Math.max(0, n);
-        imgData.data[i+1] = Math.max(0, n);
-        imgData.data[i+2] = Math.max(0, n);
-        imgData.data[i+3] = Math.random() < noiseLevel * 3 ? 18 : 0;
+    const effectiveNoiseMode = frame?.disturbance?.config?.sensor_noise?.enabled ? noiseMode : 'gaussian';
+
+    if (noiseLevel > 0 && effectiveNoiseMode !== 'none') {
+      const fid = frame?.frame_id ?? 0;
+
+      if (effectiveNoiseMode === 'salt_pepper') {
+        // Fast sparse salt-and-pepper: 0 allocation, O(specks) instead of O(pixels)
+        const count = Math.min(300, Math.floor(noiseLevel * 600));
+        ctx.save();
+        for (let i = 0; i < count; i++) {
+          const rx = (Math.random() * W) | 0;
+          const ry = (Math.random() * H) | 0;
+          ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.85)';
+          ctx.fillRect(rx, ry, 1.2, 1.2);
+        }
+        ctx.restore();
+      } else {
+        // Gaussian & Poisson: GPU draw from pre-generated texture pool
+        const pool = getNoisePool(effectiveNoiseMode === 'poisson' ? 'poisson' : 'gaussian');
+        const patternCanvas = pool[fid % pool.length];
+        if (patternCanvas) {
+          ctx.save();
+          ctx.globalAlpha = Math.min(0.9, noiseLevel * 3.8);
+          ctx.globalCompositeOperation = 'screen';
+          // Slight jitter so grain dances across frames
+          const jx = ((fid * 17) % 16) - 8;
+          const jy = ((fid * 23) % 16) - 8;
+          ctx.drawImage(patternCanvas, jx, jy, W, H);
+          ctx.restore();
+        }
       }
-      ctx.putImageData(imgData, 0, 0);
     }
 
-    // ── 4. Beacon (the actual moving light source) ───────────
+    // ── 4. Beacon (the actual moving light source) ─────────────
     const imgPos = frame?.target?.image_position;
     if (imgPos) {
-      // Lerp for smooth movement
       beaconPos.current.x += (imgPos.x - beaconPos.current.x) * 0.25;
       beaconPos.current.y += (imgPos.y - beaconPos.current.y) * 0.25;
     }
     const bx = beaconPos.current.x;
     const by = beaconPos.current.y;
+    const half = beaconSize / 2;
 
-    // Only draw if beacon is within frame
     if (bx > 0 && bx < W && by > 0 && by < H) {
-      // Outer atmospheric halo
+      // Outer atmospheric halo (shared for both shapes)
       const haloR = isLocked ? 28 : 22;
       const halo = ctx.createRadialGradient(bx, by, 0, bx, by, haloR);
       halo.addColorStop(0,   isLocked ? 'rgba(120,240,160,0.35)' : 'rgba(100,200,255,0.3)');
@@ -120,43 +197,167 @@ export function CameraFeed({ frame, width = 640, height = 480 }: Props) {
       ctx.fillStyle = halo;
       ctx.fill();
 
-      // Mid glow ring
-      const midGlow = ctx.createRadialGradient(bx, by, 0, bx, by, 9);
-      midGlow.addColorStop(0,   isLocked ? 'rgba(180,255,200,0.9)' : 'rgba(160,220,255,0.85)');
-      midGlow.addColorStop(0.4, isLocked ? 'rgba(60,220,100,0.6)'  : 'rgba(80,180,255,0.55)');
-      midGlow.addColorStop(1,   'rgba(0,0,0,0)');
-      ctx.beginPath();
-      ctx.arc(bx, by, 9, 0, Math.PI * 2);
-      ctx.fillStyle = midGlow;
-      ctx.fill();
-
-      // Core — bright point
-      const coreGrad = ctx.createRadialGradient(bx, by, 0, bx, by, 3);
-      coreGrad.addColorStop(0, '#ffffff');
-      coreGrad.addColorStop(0.5, isLocked ? '#aaffcc' : '#aaddff');
-      coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.beginPath();
-      ctx.arc(bx, by, 3, 0, Math.PI * 2);
-      ctx.fillStyle = coreGrad;
-      ctx.fill();
-
-      // Diffraction spikes (realistic optical artifact)
-      const spikeLen = isLocked ? 18 : 12;
-      const spikeAlpha = isLocked ? 0.55 : 0.35;
-      ctx.strokeStyle = `rgba(200,230,255,${spikeAlpha})`;
-      ctx.lineWidth = 0.8;
-      [0, 90, 45, 135].forEach(angle => {
-        const rad = (angle * Math.PI) / 180;
+      if (beaconShape === 'square') {
+        // ── Square beacon (PS4 spec default) ────────────────
+        // Glow shadow
+        ctx.shadowColor = isLocked ? '#80ffb0' : '#80d0ff';
+        ctx.shadowBlur = 16;
+        // Core bright square
+        ctx.fillStyle = isLocked ? '#ccffdd' : '#cceeff';
+        ctx.fillRect(bx - half, by - half, beaconSize, beaconSize);
+        // Inner brighter centre
+        const cSize = Math.max(2, beaconSize * 0.4);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(bx - cSize/2, by - cSize/2, cSize, cSize);
+        ctx.shadowBlur = 0;
+        // Outline
+        ctx.strokeStyle = isLocked ? 'rgba(100,255,160,0.9)' : 'rgba(100,200,255,0.8)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx - half, by - half, beaconSize, beaconSize);
+        // Diffraction spikes
+        const spikeLen = isLocked ? beaconSize + 10 : beaconSize + 6;
+        const spikeAlpha = isLocked ? 0.55 : 0.35;
+        ctx.strokeStyle = `rgba(200,230,255,${spikeAlpha})`;
+        ctx.lineWidth = 0.8;
+        [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy]) => {
+          ctx.beginPath();
+          ctx.moveTo(bx + dx * (half + 1), by + dy * (half + 1));
+          ctx.lineTo(bx + dx * spikeLen,   by + dy * spikeLen);
+          ctx.stroke();
+        });
+      } else {
+        // ── Circle beacon (original glow) ──────────────────
+        const midGlow = ctx.createRadialGradient(bx, by, 0, bx, by, 9);
+        midGlow.addColorStop(0,   isLocked ? 'rgba(180,255,200,0.9)' : 'rgba(160,220,255,0.85)');
+        midGlow.addColorStop(0.4, isLocked ? 'rgba(60,220,100,0.6)'  : 'rgba(80,180,255,0.55)');
+        midGlow.addColorStop(1,   'rgba(0,0,0,0)');
         ctx.beginPath();
-        ctx.moveTo(bx + Math.cos(rad) * 2, by + Math.sin(rad) * 2);
-        ctx.lineTo(bx + Math.cos(rad) * spikeLen, by + Math.sin(rad) * spikeLen);
-        ctx.moveTo(bx - Math.cos(rad) * 2, by - Math.sin(rad) * 2);
-        ctx.lineTo(bx - Math.cos(rad) * spikeLen, by - Math.sin(rad) * spikeLen);
-        ctx.stroke();
-      });
+        ctx.arc(bx, by, 9, 0, Math.PI * 2);
+        ctx.fillStyle = midGlow;
+        ctx.fill();
+
+        const coreGrad = ctx.createRadialGradient(bx, by, 0, bx, by, 3);
+        coreGrad.addColorStop(0, '#ffffff');
+        coreGrad.addColorStop(0.5, isLocked ? '#aaffcc' : '#aaddff');
+        coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.beginPath();
+        ctx.arc(bx, by, 3, 0, Math.PI * 2);
+        ctx.fillStyle = coreGrad;
+        ctx.fill();
+
+        const spikeLen = isLocked ? 18 : 12;
+        const spikeAlpha = isLocked ? 0.55 : 0.35;
+        ctx.strokeStyle = `rgba(200,230,255,${spikeAlpha})`;
+        ctx.lineWidth = 0.8;
+        [0, 90, 45, 135].forEach(angle => {
+          const rad = (angle * Math.PI) / 180;
+          ctx.beginPath();
+          ctx.moveTo(bx + Math.cos(rad) * 2, by + Math.sin(rad) * 2);
+          ctx.lineTo(bx + Math.cos(rad) * spikeLen, by + Math.sin(rad) * spikeLen);
+          ctx.moveTo(bx - Math.cos(rad) * 2, by - Math.sin(rad) * 2);
+          ctx.lineTo(bx - Math.cos(rad) * spikeLen, by - Math.sin(rad) * spikeLen);
+          ctx.stroke();
+        });
+      }
     }
 
-    // ── 5. Atmospheric turbulence shimmer ────────────────────
+    // ── 4b. Secondary Targets (Multi-Target Mode) ───────────
+    const secondaryTargets = (frame?.targets ?? []).filter(t => !t.is_primary && t.image_position);
+    secondaryTargets.forEach(st => {
+      const sx = st.image_position!.x;
+      const sy = st.image_position!.y;
+      if (sx > 0 && sx < W && sy > 0 && sy < H) {
+        // Amber halo
+        const sHalo = ctx.createRadialGradient(sx, sy, 0, sx, sy, 18);
+        sHalo.addColorStop(0, 'rgba(230,160,50,0.35)');
+        sHalo.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.beginPath();
+        ctx.arc(sx, sy, 18, 0, Math.PI * 2);
+        ctx.fillStyle = sHalo;
+        ctx.fill();
+
+        // Secondary beacon core (amber)
+        ctx.fillStyle = '#ffdd88';
+        if (beaconShape === 'square') {
+          ctx.fillRect(sx - 4, sy - 4, 8, 8);
+        } else {
+          ctx.beginPath();
+          ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Secondary target ID label
+        ctx.fillStyle = '#e0a040';
+        ctx.font = 'bold 9px "Courier New", monospace';
+        ctx.fillText(`${st.id} [SEC]`, sx + 10, sy - 6);
+
+        // Dashed bracket box
+        ctx.strokeStyle = 'rgba(230,160,50,0.75)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.strokeRect(sx - 9, sy - 9, 18, 18);
+        ctx.setLineDash([]);
+      }
+    });
+
+    // ── 5. Atmospheric visual effects ──────────────────────
+    if (atmosMode !== 'clear') {
+      const elapsed = frame?.elapsed ?? 0;
+
+      if (atmosMode === 'haze') {
+        // Haze: semi-transparent white overlay reducing contrast
+        ctx.fillStyle = 'rgba(220,230,225,0.25)';
+        ctx.fillRect(0, 0, W, H);
+        // Slight brightness boost to simulate light scatter
+        ctx.fillStyle = 'rgba(200,210,200,0.08)';
+        ctx.fillRect(0, 0, W, H);
+
+      } else if (atmosMode === 'fog') {
+        // Fog: strong white overlay with animated wisps
+        ctx.fillStyle = 'rgba(230,235,230,0.55)';
+        ctx.fillRect(0, 0, W, H);
+        // Animated fog tendrils
+        for (let fi = 0; fi < 5; fi++) {
+          const fx = (fi * 137 + elapsed * 15) % W;
+          const fy = (fi * 89  + elapsed * 8)  % H;
+          const fr2 = 60 + fi * 20;
+          const fogGrad = ctx.createRadialGradient(fx, fy, 0, fx, fy, fr2);
+          fogGrad.addColorStop(0, 'rgba(240,245,240,0.35)');
+          fogGrad.addColorStop(1, 'rgba(240,245,240,0)');
+          ctx.beginPath();
+          ctx.ellipse(fx, fy, fr2 * 1.6, fr2, Math.sin(elapsed + fi) * 0.3, 0, Math.PI * 2);
+          ctx.fillStyle = fogGrad;
+          ctx.fill();
+        }
+
+      } else if (atmosMode === 'rain') {
+        // Rain: diagonal streaks
+        ctx.strokeStyle = 'rgba(180,200,220,0.35)';
+        ctx.lineWidth = 0.8;
+        const rainSpeed = elapsed * 300;
+        for (let ri = 0; ri < 80; ri++) {
+          const rx = ((ri * 67 + rainSpeed * 0.7) % (W + 40)) - 20;
+          const ry = ((ri * 43 + rainSpeed) % (H + 30)) - 15;
+          ctx.beginPath();
+          ctx.moveTo(rx, ry);
+          ctx.lineTo(rx - 4, ry + 14);
+          ctx.stroke();
+        }
+        // Slight blur overlay
+        ctx.fillStyle = 'rgba(160,180,200,0.06)';
+        ctx.fillRect(0, 0, W, H);
+
+      } else if (atmosMode === 'low_light') {
+        // Low light: strong dark overlay + brightness reduction
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, W, H);
+        // Add slight green tint (night vision simulation)
+        ctx.fillStyle = 'rgba(0,40,20,0.12)';
+        ctx.fillRect(0, 0, W, H);
+      }
+    }
+
+    // ── 5b. Atmospheric turbulence shimmer ───────────────────
     const turbEnabled = frame?.disturbance?.config?.atmospheric_turbulence?.enabled;
     if (turbEnabled && bx > 0 && bx < W && by > 0 && by < H) {
       const t = (frame?.elapsed ?? 0) * 8;
@@ -377,7 +578,7 @@ export function CameraFeed({ frame, width = 640, height = 480 }: Props) {
     ctx.lineWidth = 1;
     ctx.strokeRect(2, 2, W-4, H-4);
 
-  }, [frame]);
+  }, [frame, atmosMode, noiseMode, beaconShape, beaconSize]);
 
   return (
     <canvas

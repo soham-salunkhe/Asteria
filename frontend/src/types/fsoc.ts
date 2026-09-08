@@ -54,6 +54,7 @@ export interface TargetState3D {
   /** Pixel coordinates in camera frame — null when target is outside FOV */
   image_position: Vec2 | null;
   timestamp: number;
+  is_primary?: boolean;
 }
 
 // ── Camera ────────────────────────────────────────────────────
@@ -83,6 +84,8 @@ export interface CameraState {
   tilt_rate: number;
   fov_h: number;
   fov_v: number;
+  platform_motion?: string;
+  position?: Vec3;
   timestamp: number;
 }
 
@@ -95,8 +98,19 @@ export interface BoundingBox {
   height: number;
 }
 
+export interface CentroidingError {
+  pixel_error_x: number | null;
+  pixel_error_y: number | null;
+  pixel_error_total: number | null;
+  centroid_x: number | null;
+  centroid_y: number | null;
+  target_px_x: number | null;
+  target_px_y: number | null;
+}
+
 export interface DetectionResult {
-  target_id: string;
+  detected: boolean;
+  target_id?: string;
   /** YOLO class label */
   class: string;
   confidence: number;
@@ -223,6 +237,10 @@ export interface TelemetryFrame {
   target_state: TargetState;
 
   target: TargetState3D;
+  /** Multiple targets when multi-target mode is active */
+  targets?: TargetState3D[];
+  /** Centroiding pixel errors */
+  centroiding_error?: CentroidingError;
   camera: CameraState;
 
   detection: DetectionResult | null;

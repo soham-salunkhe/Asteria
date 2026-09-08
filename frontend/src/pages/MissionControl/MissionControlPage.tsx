@@ -2,7 +2,7 @@
  * FSOC — Mission Control
  * Primary landing screen. Camera feed + target config + live metrics.
  */
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSimulation } from '../../hooks/useSimulation';
 import { CameraFeed } from '../../components/simulation/CameraFeed';
@@ -14,7 +14,7 @@ import type { TargetState } from '../../types/fsoc';
 // ── Target configuration form state ───────────────────────────
 interface TargetForm {
   id: string;
-  trajectory: 'sinusoidal' | 'circular' | 'linear' | 'random_walk';
+  trajectory: 'sinusoidal' | 'circular' | 'linear' | 'random_walk' | 'figure_8';
   amplitude_h: number;
   amplitude_v: number;
   period: number;
@@ -23,6 +23,8 @@ interface TargetForm {
   start_x: number;
   start_y: number;
   start_z: number;
+  beaconShape: 'square' | 'circle';
+  beaconSize: number;
 }
 
 const DEFAULT_TARGET: TargetForm = {
@@ -36,20 +38,32 @@ const DEFAULT_TARGET: TargetForm = {
   start_x: 120,
   start_y: 60,
   start_z: 350,
+  beaconShape: 'square',
+  beaconSize: 10,
 };
 
 const ENVIRONMENTS = ['urban', 'open_sky', 'mountain', 'uav', 'satellite'] as const;
-const TRAJECTORIES = ['sinusoidal', 'circular', 'linear', 'random_walk'] as const;
+const TRAJECTORIES = ['sinusoidal', 'circular', 'linear', 'random_walk', 'figure_8'] as const;
+const ATMOS_MODES  = ['clear', 'haze', 'fog', 'rain', 'low_light'] as const;
+const PLATFORM_MOTIONS = ['stationary', 'uav_hover', 'orbital', 'circular_patrol'] as const;
+type AtmosMode = typeof ATMOS_MODES[number];
+type PlatformMotion = typeof PLATFORM_MOTIONS[number];
 
 export function MissionControlPage() {
   const sim = useSimulation();
   const nav = useNavigate();
 
   const [starting, setStarting]     = useState(false);
-  const [viewMode, setViewMode]   = useState<'camera' | '3d' | 'dual'>('dual');
+  const [viewMode, setViewMode]   = useState<'camera' | '3d'>('camera');
   const [showConfig, setShowConfig] = useState(false);
   const [environment, setEnvironment] = useState<string>('urban');
+  const [atmosMode, setAtmosMode]   = useState<AtmosMode>('clear');
+  const [multiTarget, setMultiTarget] = useState(false);
+  const [platformMotion, setPlatformMotion] = useState<PlatformMotion>('stationary');
   const [target, setTarget]         = useState<TargetForm>(DEFAULT_TARGET);
+  const [videoFile, setVideoFile]   = useState<File | null>(null);
+  const [videoUploading, setVideoUploading] = useState(false);
+  const videoInputRef = useRef<HTMLInputElement>(null);
 
   const f   = sim.latest;
   const met = f?.metrics;
@@ -60,6 +74,9 @@ export function MissionControlPage() {
   const buildConfig = () => ({
     name: `FSOC-DEMO-042`,
     environment,
+    atmospheric_mode: atmosMode,
+    multi_target: multiTarget,
+    platform_motion: platformMotion,
     target: {
       id: target.id,
       trajectory: target.trajectory,
@@ -68,6 +85,8 @@ export function MissionControlPage() {
       amplitude_h: target.amplitude_h,
       amplitude_v: target.amplitude_v,
       period: target.period,
+      beacon_shape: target.beaconShape,
+      beacon_size: target.beaconSize,
     },
   });
 
@@ -93,6 +112,29 @@ export function MissionControlPage() {
 
   const setT = (k: keyof TargetForm, v: string | number) =>
     setTarget(prev => ({ ...prev, [k]: v }));
+
+  // ── Video upload handler (Benchmark 2) ─────────────────────
+  const handleVideoUpload = async (file: File) => {
+    setVideoFile(file);
+    setVideoUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('http://localhost:8000/api/simulation/upload-video', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      // Navigate to tracking page as soon as upload is accepted (processing is async via WS)
+      if (data.success) {
+        setTimeout(() => nav('/tracking'), 400);
+      }
+    } catch (e) {
+      console.error('Video upload failed', e);
+    } finally {
+      setVideoUploading(false);
+    }
+  };
 
   return (
     <div className="mc-root">
@@ -130,6 +172,27 @@ export function MissionControlPage() {
               >
                 ⚙ CONFIGURE
               </button>
+              {/* Benchmark 2 — Video input mode */}
+              <button
+                className="mc-btn-video"
+                onClick={() => videoInputRef.current?.click()}
+                disabled={videoUploading}
+                title="Upload MP4 for Benchmark 2 evaluation"
+              >
+                {videoUploading ? '⏳ PROCESSING…' : '📹 UPLOAD VIDEO'}
+              </button>
+              <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/mp4,video/*"
+                style={{ display: 'none' }}
+                onChange={e => { const f = e.target.files?.[0]; if (f) handleVideoUpload(f); }}
+              />
+              {videoFile && !videoUploading && (
+                <span className="mc-video-name" title={videoFile.name}>
+                  📹 {videoFile.name.slice(0, 20)}{videoFile.name.length > 20 ? '…' : ''}
+                </span>
+              )}
             </div>
           ) : (
             <div className="mc-running-controls">
@@ -198,7 +261,61 @@ export function MissionControlPage() {
                     className={`mc-cfg-chip${target.trajectory === t ? ' mc-cfg-chip--on' : ''}`}
                     onClick={() => setT('trajectory', t)}
                   >
-                    {t.replace('_', ' ').toUpperCase()}
+                    {t.replace(/_/g, ' ').toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Target Mode: Single vs Multi-Target */}
+            <div className="mc-cfg-group">
+              <div className="mc-cfg-label">TARGET MODE (BEACONS)</div>
+              <div className="mc-cfg-row">
+                <button
+                  className={`mc-cfg-chip${!multiTarget ? ' mc-cfg-chip--on' : ''}`}
+                  onClick={() => setMultiTarget(false)}
+                >
+                  SINGLE BEACON (BEACON-01)
+                </button>
+                <button
+                  className={`mc-cfg-chip${multiTarget ? ' mc-cfg-chip--on' : ''}`}
+                  onClick={() => setMultiTarget(true)}
+                >
+                  MULTI-TARGET (2 BEACONS)
+                </button>
+              </div>
+            </div>
+
+            {/* Host Platform Motion */}
+            <div className="mc-cfg-group">
+              <div className="mc-cfg-label">HOST PLATFORM MOTION</div>
+              <div className="mc-cfg-row">
+                {PLATFORM_MOTIONS.map(pm => (
+                  <button
+                    key={pm}
+                    className={`mc-cfg-chip${platformMotion === pm ? ' mc-cfg-chip--on' : ''}`}
+                    onClick={() => setPlatformMotion(pm)}
+                  >
+                    {pm === 'stationary' ? 'STATIONARY'
+                      : pm === 'uav_hover' ? 'UAV HOVER/SWAY'
+                      : pm === 'orbital' ? 'LEO SATELLITE'
+                      : 'CIRCULAR PATROL'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Atmospheric Visual Mode */}
+            <div className="mc-cfg-group">
+              <div className="mc-cfg-label">ATMOSPHERIC CONDITION</div>
+              <div className="mc-cfg-row">
+                {ATMOS_MODES.map(m => (
+                  <button
+                    key={m}
+                    className={`mc-cfg-chip${atmosMode === m ? ' mc-cfg-chip--on' : ''}`}
+                    onClick={() => setAtmosMode(m)}
+                  >
+                    {m.replace('_', ' ').toUpperCase()}
                   </button>
                 ))}
               </div>
@@ -206,7 +323,7 @@ export function MissionControlPage() {
 
             {/* Motion parameters */}
             <div className="mc-cfg-params-grid">
-              {target.trajectory === 'sinusoidal' || target.trajectory === 'circular' ? (
+              {target.trajectory === 'sinusoidal' || target.trajectory === 'circular' || target.trajectory === 'figure_8' ? (
                 <>
                   <CfgSlider label="Amplitude H (m)" value={target.amplitude_h} min={10} max={200} step={5}  onChange={v => setT('amplitude_h', v)} />
                   <CfgSlider label="Amplitude V (m)" value={target.amplitude_v} min={5}  max={120} step={5}  onChange={v => setT('amplitude_v', v)} />
@@ -223,7 +340,24 @@ export function MissionControlPage() {
               <CfgSlider label="Start Z (m)" value={target.start_z} min={50}   max={800} step={10} onChange={v => setT('start_z', v)} />
             </div>
 
-            {/* Summary */}
+            {/* Beacon shape + size */}
+            <div className="mc-cfg-group">
+              <div className="mc-cfg-label">BEACON SHAPE</div>
+              <div className="mc-cfg-row">
+                {(['square', 'circle'] as const).map(s => (
+                  <button
+                    key={s}
+                    className={`mc-cfg-chip${target.beaconShape === s ? ' mc-cfg-chip--on' : ''}`}
+                    onClick={() => setT('beaconShape', s)}
+                  >
+                    {s.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mc-cfg-params-grid">
+              <CfgSlider label="Beacon Size (px)" value={target.beaconSize} min={5} max={20} step={1} onChange={v => setT('beaconSize', v)} />
+            </div>
             <div className="mc-cfg-summary">
               <span className="mc-cfg-sum-item">ID: <b>{target.id}</b></span>
               <span className="mc-cfg-sum-sep">·</span>
@@ -240,17 +374,10 @@ export function MissionControlPage() {
       {/* ── Main body ───────────────────────────────────────── */}
       <div className="mc-body">
 
-        {/* LEFT — camera feed / 3d view / dual view */}
+        {/* LEFT — camera feed / 3d view */}
         <div className="mc-feed-col">
           <div className="mc-feed-wrapper">
             <div className="mc-view-toggle" role="tablist" aria-label="Mission visualisation">
-              <button
-                type="button"
-                className={`mc-view-btn${viewMode === 'dual' ? ' mc-view-btn--active' : ''}`}
-                onClick={() => setViewMode('dual')}
-              >
-                ⚡ DUAL VIEW (BOTH)
-              </button>
               <button
                 type="button"
                 className={`mc-view-btn${viewMode === 'camera' ? ' mc-view-btn--active' : ''}`}
@@ -272,19 +399,8 @@ export function MissionControlPage() {
                 large
               />
             </div>
-            {viewMode === 'dual' ? (
-              <div className="mc-dual-grid">
-                <div className="dual-pane dual-pane--camera">
-                  <div className="dual-pane-badge">NORMAL OPTICAL FEED</div>
-                  <CameraFeed frame={f} width={640} height={480} />
-                </div>
-                <div className="dual-pane dual-pane--3d">
-                  <div className="dual-pane-badge">3-D DIGITAL TWIN</div>
-                  <SimulationViewport frame={f} history={sim.history} />
-                </div>
-              </div>
-            ) : viewMode === 'camera' ? (
-              <CameraFeed frame={f} width={640} height={480} />
+            {viewMode === 'camera' ? (
+              <CameraFeed frame={f} width={640} height={480} atmosMode={atmosMode} noiseMode="gaussian" beaconShape={target.beaconShape} beaconSize={target.beaconSize} />
             ) : (
               <div className="mc-3d-canvas">
                 <SimulationViewport frame={f} history={sim.history} />

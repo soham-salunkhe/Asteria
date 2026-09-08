@@ -12,7 +12,7 @@ import {
 } from 'react-router-dom';
 import { AuthProvider }       from './context/AuthContext';
 import { useAuth }            from './context/AuthContext';
-import { useSimulation }      from './hooks/useSimulation';
+import { SimulationProvider, useSimulation } from './hooks/useSimulation';
 import { SideNav }            from './components/layout/SideNav';
 import { LoginPage }          from './pages/LoginPage';
 import { SignUpPage }         from './pages/SignUpPage';
@@ -89,9 +89,11 @@ function AppRoutes() {
 export function App() {
   return (
     <AuthProvider>
-      <Router>
-        <AppRoutes />
-      </Router>
+      <SimulationProvider>
+        <Router>
+          <AppRoutes />
+        </Router>
+      </SimulationProvider>
     </AuthProvider>
   );
 }

@@ -28,6 +28,9 @@ class RunMetrics:
         self._first_detection_time: Optional[float] = None
         self._target_states: list[str] = []
         self._lost_count: int = 0
+        # Re-acquisition tracking
+        self._reacq_start: Optional[float] = None  # sim time when LOST began
+        self._reacq_times: list[float] = []         # all re-acq durations
 
     def update(
         self,
@@ -59,6 +62,13 @@ class RunMetrics:
 
         if target_state == 'LOST':
             self._lost_count += 1
+            if self._reacq_start is None:
+                self._reacq_start = simulation_elapsed
+        elif target_state in ('TRACKING', 'LOCKED') and self._reacq_start is not None:
+            # Completed a re-acquisition
+            reacq_duration = simulation_elapsed - self._reacq_start
+            self._reacq_times.append(reacq_duration)
+            self._reacq_start = None
 
     def current_fps(self) -> float:
         """FPS computed from last 30 frames."""
@@ -97,6 +107,12 @@ class RunMetrics:
             'detection_confidence': round(avg_conf, 4),
             'total_frames': self._total_frames,
             'lost_count': self._lost_count,
+            # Re-acquisition metrics (PS4 param 19)
+            'reacquisition_count': len(self._reacq_times),
+            'avg_reacquisition_time': round(sum(self._reacq_times) / len(self._reacq_times), 3)
+                                     if self._reacq_times else None,
+            'max_reacquisition_time': round(max(self._reacq_times), 3)
+                                     if self._reacq_times else None,
         }
 
     def frame_metrics(self) -> dict:

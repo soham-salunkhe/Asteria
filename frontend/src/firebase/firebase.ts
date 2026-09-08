@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
 
 // All values come from Vite environment variables — never hard-coded.
 // Copy .env.example → .env and fill in your Firebase project values.
@@ -12,12 +12,17 @@ const firebaseConfig = {
   appId:             import.meta.env.VITE_FIREBASE_APP_ID             as string,
 };
 
-// Guard against double-initialisation in HMR / strict-mode
-const app = getApps().length === 0
-  ? initializeApp(firebaseConfig)
-  : getApps()[0];
+export const demoMode = import.meta.env.VITE_DEMO_MODE === 'true';
+const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
 
-export const auth = getAuth(app);
+// Guard against double-initialisation in HMR / strict-mode
+const app = hasFirebaseConfig
+  ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0])
+  : null;
+
+// Auth is only used when Firebase is configured. Demo mode bypasses it through
+// AuthProvider, while the cast preserves the existing Firebase call sites.
+export const auth = app ? getAuth(app) : null as unknown as Auth;
 
 export const googleProvider = new GoogleAuthProvider();
 // Request profile + email scopes so display name is always available

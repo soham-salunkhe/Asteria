@@ -17,6 +17,8 @@ class CameraConfig:
     resolution_h: int = 480
     fps: float = 30.0
     noise_level: float = 0.02
+    platform_motion: str = 'stationary'  # 'stationary', 'uav_hover', 'orbital', 'circular_patrol'
+    platform_speed: float = 2.0
 
 
 class Camera:
@@ -36,10 +38,41 @@ class Camera:
 
     def __init__(self, config: CameraConfig):
         self.config = config
+        self._initial_pos = Vec3(config.position.x, config.position.y, config.position.z)
         self._pan: float = 0.0       # degrees
         self._tilt: float = 0.0      # degrees
         self._pan_rate: float = 0.0  # deg/s
         self._tilt_rate: float = 0.0
+        self._t: float = 0.0
+
+    def update_platform(self, dt: float) -> None:
+        """Update host platform position according to trajectory model."""
+        self._t += dt
+        t = self._t
+        mode = getattr(self.config, 'platform_motion', 'stationary')
+        base = self._initial_pos
+        spd = getattr(self.config, 'platform_speed', 2.0)
+
+        if mode == 'uav_hover':
+            # UAV aerodynamic hover drift: small multiaxial harmonic sway
+            dx = 6.0 * math.sin(0.4 * t)
+            dy = 2.5 * math.cos(0.35 * t)
+            dz = 2.0 * math.sin(0.25 * t)
+            self.config.position = Vec3(base.x + dx, base.y + dy, base.z + dz)
+        elif mode == 'orbital':
+            # Satellite LEO pass forward transit
+            self.config.position = Vec3(base.x + spd * 3.0 * math.sin(0.15 * t), base.y, base.z)
+        elif mode == 'circular_patrol':
+            # Host mobile terminal circling patrol
+            r = 18.0
+            omega = 0.25 * (spd / 2.0)
+            self.config.position = Vec3(
+                base.x + r * math.cos(omega * t),
+                base.y + 2.0 * math.sin(omega * 2 * t),
+                base.z + r * math.sin(omega * t)
+            )
+        else:
+            self.config.position = Vec3(base.x, base.y, base.z)
 
     # ── Pan/tilt ──────────────────────────────────────────────
 
@@ -167,5 +200,7 @@ class Camera:
             'tilt_rate': round(self._tilt_rate, 4),
             'fov_h': self.config.fov_h,
             'fov_v': self.config.fov_v,
+            'platform_motion': getattr(self.config, 'platform_motion', 'stationary'),
+            'position': self.config.position.as_dict(),
             'timestamp': timestamp,
         }
