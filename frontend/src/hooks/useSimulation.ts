@@ -71,8 +71,8 @@ function sameDisturbances(a: DisturbanceConfig, b: DisturbanceConfig): boolean {
     'sensor_noise', 'target_motion_variation',
   ] as const;
   return keys.every(k => {
-    const x = a[k] as Record<string, unknown>;
-    const y = (b[k] ?? {}) as Record<string, unknown>;
+    const x = a[k] as unknown as Record<string, unknown>;
+    const y = (b[k] ?? {}) as unknown as Record<string, unknown>;
     return Object.keys(x).every(f => x[f] === y[f]);
   });
 }

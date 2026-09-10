@@ -26,7 +26,7 @@ export function DisturbancesPage() {
   const activeCount = f?.disturbance?.active_count ?? 0;
 
   const toggle = (key: DisturbanceKey) => {
-    const section = dist[key] as Record<string, unknown>;
+    const section = dist[key] as unknown as Record<string, unknown>;
     void sim.updateDisturbanceConfig({
       ...dist,
       [key]: { ...section, enabled: !section.enabled },
@@ -38,7 +38,7 @@ export function DisturbancesPage() {
     param: string,
     value: number | string,
   ) => {
-    const section = dist[key] as Record<string, unknown>;
+    const section = dist[key] as unknown as Record<string, unknown>;
     void sim.updateDisturbanceConfig({
       ...dist,
       [key]: { ...section, [param]: value },
