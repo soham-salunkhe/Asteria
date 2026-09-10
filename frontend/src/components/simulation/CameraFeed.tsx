@@ -28,6 +28,48 @@ const STARS = Array.from({ length: 42 }, (_, i) => ({
   a: 0.2 + (i % 7) * 0.1,
 }));
 
+// ── Pre-rendered static starfield (drawn once, blitted each frame) ──
+let _starfieldCanvas: HTMLCanvasElement | null = null;
+function getStarfieldCanvas(W: number, H: number): HTMLCanvasElement {
+  if (_starfieldCanvas && _starfieldCanvas.width === W && _starfieldCanvas.height === H) {
+    return _starfieldCanvas;
+  }
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    STARS.forEach(s => {
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200,220,220,${s.a})`;
+      ctx.fill();
+    });
+  }
+  _starfieldCanvas = c;
+  return c;
+}
+
+// ── Pre-rendered scanline overlay (drawn once, blitted each frame) ──
+let _scanlineCanvas: HTMLCanvasElement | null = null;
+function getScanlineCanvas(W: number, H: number): HTMLCanvasElement {
+  if (_scanlineCanvas && _scanlineCanvas.width === W && _scanlineCanvas.height === H) {
+    return _scanlineCanvas;
+  }
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = 'rgba(0,0,0,0.06)';
+    for (let sy = 0; sy < H; sy += 3) {
+      ctx.fillRect(0, sy, W, 1);
+    }
+  }
+  _scanlineCanvas = c;
+  return c;
+}
+
 // ── Fast Zero-Allocation Noise Pool (GPU Canvas Blit) ────────
 const NOISE_W = 160;
 const NOISE_H = 120;
@@ -127,15 +169,8 @@ export function CameraFeed({
     ctx.fillStyle = horizGrad;
     ctx.fillRect(0, H * 0.6, W, H * 0.4);
 
-    // ── 2. Stars ─────────────────────────────────────────────
-    STARS.forEach(s => {
-      // Slight twinkle using frame_id
-      const twinkle = frame ? 0.6 + 0.4 * Math.sin((frame.frame_id ?? 0) * 0.1 + s.x) : s.a;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(232,228,220,${(s.a * twinkle * 0.55).toFixed(3)})`;
-      ctx.fill();
-    });
+    // ── 2. Stars (pre-rendered offscreen canvas — single blit) ──
+    ctx.drawImage(getStarfieldCanvas(W, H), 0, 0);
 
     // ── 3. Camera noise texture (Zero-allocation GPU-accelerated blit) ──
     const noiseLevel = frame?.disturbance?.config?.sensor_noise?.enabled
@@ -495,11 +530,8 @@ export function CameraFeed({
       ctx.stroke();
     }
 
-    // ── 9. Scanline overlay ──────────────────────────────────
-    for (let sy = 0; sy < H; sy += 3) {
-      ctx.fillStyle = 'rgba(0,0,0,0.06)';
-      ctx.fillRect(0, sy, W, 1);
-    }
+    // ── 9. Scanline overlay (pre-rendered offscreen canvas — single blit) ──
+    ctx.drawImage(getScanlineCanvas(W, H), 0, 0);
 
     // ── 10. HUD overlays ─────────────────────────────────────
     const hudFont    = '10px "Courier New", monospace';
@@ -533,18 +565,24 @@ export function CameraFeed({
     ctx.font = hudFontSm;
     ctx.fillText(det_model, 14, H - 12);
 
-    // BOTTOM-RIGHT — angular error
+    // BOTTOM-RIGHT — angular + pixel error
     if (frame) {
       const pe = frame.angular_error?.pan_error?.toFixed(3) ?? '—';
       const te = frame.angular_error?.tilt_error?.toFixed(3) ?? '—';
       const tot = frame.angular_error?.total_error?.toFixed(3) ?? '—';
+      const pxe = frame.pixel_error;
       ctx.fillStyle = 'rgba(4,12,10,0.82)';
-      ctx.fillRect(W - 148, H - 50, 140, 42);
+      ctx.fillRect(W - 148, H - 64, 140, 56);
       ctx.fillStyle = '#8a9ba0';
       ctx.font = hudFontSm;
       ctx.textAlign = 'right';
-      ctx.fillText(`PAN   ${pe}°`, W - 12, H - 36);
-      ctx.fillText(`TILT  ${te}°`, W - 12, H - 24);
+      ctx.fillText(`PAN   ${pe}°`, W - 12, H - 50);
+      ctx.fillText(`TILT  ${te}°`, W - 12, H - 38);
+      const pxTxt = pxe?.total != null ? `${pxe.total.toFixed(1)}px` : '—';
+      const pxClr = pxe?.total != null && pxe.total <= 10 ? '#8fa98f'
+        : pxe?.total != null && pxe.total <= 40 ? '#e39a32' : '#a86a5a';
+      ctx.fillStyle = pxClr;
+      ctx.fillText(`PX ERR  ${pxTxt}`, W - 12, H - 24);
       const errClr = parseFloat(tot) > 2 ? '#a86a5a' : parseFloat(tot) > 0.5 ? '#e39a32' : '#8fa98f';
       ctx.fillStyle = errClr;
       ctx.font = hudFont;

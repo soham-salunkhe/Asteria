@@ -25,6 +25,9 @@ interface TargetForm {
   start_z: number;
   beaconShape: 'square' | 'circle';
   beaconSize: number;
+  fov_h: number;
+  fov_v: number;
+  max_rate: number;
 }
 
 const DEFAULT_TARGET: TargetForm = {
@@ -40,7 +43,18 @@ const DEFAULT_TARGET: TargetForm = {
   start_z: 350,
   beaconShape: 'square',
   beaconSize: 10,
+  fov_h: 4,
+  fov_v: 3,
+  max_rate: 5,
 };
+
+// Closed-loop test presets (clean conditions: configure, then START CUSTOM)
+const TEST_PRESETS: { name: string; patch: Partial<TargetForm> }[] = [
+  { name: 'TEST 1 · STRAIGHT', patch: { trajectory: 'linear', start_x: -8, start_y: 2, start_z: 350, speed_x: 6, speed_y: 0.3 } },
+  { name: 'TEST 2 · CIRCULAR', patch: { trajectory: 'circular', start_x: 0, start_y: 2, start_z: 350, amplitude_h: 8, amplitude_v: 5, period: 14 } },
+  { name: 'TEST 3 · FIGURE-8', patch: { trajectory: 'figure_8', start_x: 0, start_y: 2, start_z: 350, amplitude_h: 8, amplitude_v: 5, period: 14 } },
+  { name: 'TEST 4 · RANDOM', patch: { trajectory: 'random_walk', start_x: 0, start_y: 2, start_z: 350, speed_x: 1, speed_y: 0.3 } },
+];
 
 const ENVIRONMENTS = ['urban', 'open_sky', 'mountain', 'uav', 'satellite'] as const;
 const TRAJECTORIES = ['sinusoidal', 'circular', 'linear', 'random_walk', 'figure_8'] as const;
@@ -77,6 +91,18 @@ export function MissionControlPage() {
     atmospheric_mode: atmosMode,
     multi_target: multiTarget,
     platform_motion: platformMotion,
+    camera: {
+      fov_h: target.fov_h,
+      fov_v: target.fov_v,
+      resolution_w: 640,
+      resolution_h: 480,
+      fps: 30,
+    },
+    pid: {
+      kp: 6.0, ki: 0.15, kd: 0.6,
+      max_angular_velocity: target.max_rate,
+      settling_threshold: 0.05,
+    },
     target: {
       id: target.id,
       trajectory: target.trajectory,
@@ -242,6 +268,27 @@ export function MissionControlPage() {
 
             {/* Target ID */}
             <div className="mc-cfg-group">
+              <div className="mc-cfg-label">CLOSED-LOOP TEST PRESETS (CLEAN: NOISE OFF · CLEAR · STATIONARY)</div>
+              <div className="mc-cfg-row">
+                {TEST_PRESETS.map(t => (
+                  <button
+                    key={t.name}
+                    className="mc-cfg-chip"
+                    onClick={() => {
+                      setTarget(prev => ({ ...prev, ...t.patch }));
+                      setMultiTarget(false);
+                      setPlatformMotion('stationary');
+                    }}
+                    title="Load preset, then START CUSTOM"
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Target ID */}
+            <div className="mc-cfg-group">
               <div className="mc-cfg-label">TARGET ID</div>
               <input
                 className="mc-cfg-input"
@@ -357,6 +404,16 @@ export function MissionControlPage() {
             </div>
             <div className="mc-cfg-params-grid">
               <CfgSlider label="Beacon Size (px)" value={target.beaconSize} min={5} max={20} step={1} onChange={v => setT('beaconSize', v)} />
+            </div>
+
+            {/* Virtual FSOC camera (PS169 defaults: 640×480, 4°×3°, 30 Hz, 5°/s) */}
+            <div className="mc-cfg-group">
+              <div className="mc-cfg-label">FSOC VIRTUAL CAMERA</div>
+            </div>
+            <div className="mc-cfg-params-grid">
+              <CfgSlider label="FOV-H (°)" value={target.fov_h} min={2} max={12} step={0.5} onChange={v => setT('fov_h', v)} />
+              <CfgSlider label="FOV-V (°)" value={target.fov_v} min={2} max={9} step={0.5} onChange={v => setT('fov_v', v)} />
+              <CfgSlider label="Max Rate (°/s)" value={target.max_rate} min={1} max={15} step={0.5} onChange={v => setT('max_rate', v)} />
             </div>
             <div className="mc-cfg-summary">
               <span className="mc-cfg-sum-item">ID: <b>{target.id}</b></span>

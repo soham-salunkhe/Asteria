@@ -49,6 +49,10 @@ export const fsocApi = {
   updateCamera: (pan: number, tilt: number) =>
     post('/api/simulation/camera', { pan, tilt }),
 
+  // Operator target shift (3D move → true beacon position → loop)
+  setTargetOffset: (x: number, y: number, z: number) =>
+    post('/api/simulation/target_offset', { x, y, z }),
+
   // Scenarios
   createScenario: (data: unknown) => post('/api/scenarios', data),
   listScenarios: () => get<{ data: unknown[] }>('/api/scenarios'),

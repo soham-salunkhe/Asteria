@@ -16,7 +16,7 @@ interface DisturbanceState {
   atmospheric_turbulence: { enabled: boolean; strength: number; frequency: number };
   platform_vibration:     { enabled: boolean; amplitude: number; frequency: number };
   camera_motion:          { enabled: boolean; angular_disturbance: number };
-  sensor_noise:           { enabled: boolean; noise_level: number };
+  sensor_noise:           { enabled: boolean; noise_level: number; noise_type: string };
   target_motion_variation:{ enabled: boolean; velocity_variation: number };
 }
 
@@ -24,7 +24,7 @@ const DEFAULT_DIST: DisturbanceState = {
   atmospheric_turbulence:  { enabled: false, strength: 0.3,  frequency: 2.0 },
   platform_vibration:      { enabled: false, amplitude: 0.5, frequency: 10.0 },
   camera_motion:           { enabled: false, angular_disturbance: 0.1 },
-  sensor_noise:            { enabled: false, noise_level: 0.05 },
+  sensor_noise:            { enabled: false, noise_level: 0.05, noise_type: 'gaussian' },
   target_motion_variation: { enabled: false, velocity_variation: 0.3 },
 };
 
@@ -52,7 +52,7 @@ export function DisturbancesPage() {
   const setParam = async (
     key: keyof DisturbanceState,
     param: string,
-    value: number,
+    value: number | string,
   ) => {
     const updated = {
       ...dist,
@@ -152,7 +152,7 @@ export function DisturbancesPage() {
           {/* Sensor Noise */}
           <DisturbanceBlock
             title="SENSOR NOISE"
-            desc="Image sensor thermal noise, read noise, and shot noise."
+            desc="Image sensor thermal noise, read noise, and shot noise — applied to the camera image."
             enabled={dist.sensor_noise.enabled}
             onToggle={() => toggle('sensor_noise')}
           >
@@ -161,6 +161,21 @@ export function DisturbancesPage() {
               value={dist.sensor_noise.noise_level}
               onChange={v => setParam('sensor_noise', 'noise_level', v)}
             />
+            <div className="dist-param-row">
+              <span className="dist-param-label">Noise Type</span>
+              <span style={{ display: 'flex', gap: 4 }}>
+                {(['gaussian', 'salt_pepper', 'poisson'] as const).map(nt => (
+                  <button
+                    key={nt}
+                    className={`vp-btn vp-btn--sm${dist.sensor_noise.noise_type === nt ? ' vp-btn--active' : ''}`}
+                    onClick={() => setParam('sensor_noise', 'noise_type', nt)}
+                    title={nt}
+                  >
+                    {nt === 'gaussian' ? 'GAUSS' : nt === 'salt_pepper' ? 'S&P' : 'POISS'}
+                  </button>
+                ))}
+              </span>
+            </div>
           </DisturbanceBlock>
 
           {/* Target Motion Variation */}

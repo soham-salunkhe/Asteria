@@ -98,6 +98,12 @@ class CameraAngleRequest(BaseModel):
     tilt: float = Field(0.0, ge=-90.0, le=90.0)
 
 
+class TargetOffsetRequest(BaseModel):
+    x: float = Field(0.0, ge=-100.0, le=100.0)
+    y: float = Field(0.0, ge=-100.0, le=100.0)
+    z: float = Field(0.0, ge=-100.0, le=100.0)
+
+
 class ScenarioCreateRequest(BaseModel):
     name: str
     description: str = ''
@@ -156,6 +162,14 @@ def update_pid(req: PIDUpdateRequest):
 @app.post('/api/simulation/camera')
 def update_camera(req: CameraAngleRequest):
     engine.update_camera_angles(req.pan, req.tilt)
+    return {'success': True}
+
+
+@app.post('/api/simulation/target_offset')
+def update_target_offset(req: TargetOffsetRequest):
+    """Shift the true beacon world position (e.g. operator moved TARGET-01
+    in the 3D view). Flows through projection → feed → detection → PID."""
+    engine.set_target_offset(req.x, req.y, req.z)
     return {'success': True}
 
 

@@ -258,7 +258,40 @@ export function LiveTrackingPage() {
         <div className="sidebar-divider" />
         <div className="sidebar-section-title">EVENT LOG</div>
         <EventLog events={sim.events} maxHeight={200} />
+
+        <div className="sidebar-divider" />
+
+        {/* PS169 benchmark compliance — every value measured live */}
+        <TelemetryPanel
+          title="PS169 COMPLIANCE"
+          fields={ps169Fields(met?.ps169)}
+        />
       </div>
     </div>
   );
+}
+
+function ps169Fields(ps169: Record<string, { value: number | null; pass: boolean }> | undefined) {
+  const item = (
+    label: string, key: string, fmt: (v: number) => string,
+  ) => {
+    const it = ps169?.[key];
+    const v = it?.value ?? null;
+    const pass = it?.pass ?? false;
+    return {
+      label,
+      value: v === null || v === undefined ? '—' : `${fmt(v)} · ${pass ? 'PASS' : 'FAIL'}`,
+      highlight: pass && v !== null && v !== undefined,
+      warn: !pass,
+      dim: v === null || v === undefined,
+    };
+  };
+  return [
+    item('ACQ ≤2s', 'acquisition_s', v => `${v.toFixed(2)} s`),
+    item('AVG ≤10px', 'avg_error_px', v => `${v.toFixed(2)} px`),
+    item('MAX ≤10px', 'max_error_px', v => `${v.toFixed(2)} px`),
+    item('LOSS <5%', 'target_loss_pct', v => `${v.toFixed(1)} %`),
+    item('REACQ ≤1s', 'reacquisition_s', v => `${v.toFixed(2)} s`),
+    item('FPS ≥20', 'fps', v => `${v.toFixed(1)}`),
+  ];
 }

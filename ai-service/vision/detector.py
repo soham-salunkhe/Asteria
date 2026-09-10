@@ -4,27 +4,29 @@ FSOC PAT — Detector Abstraction Layer
 Architecture:
     DetectorInterface (ABC)
           ↓
-    ┌─────────────────┐
-    │                 │
-  YOLODetector    MockDetector
-    │                 │
-    └────────┬────────┘
+    ┌──────────────────┐
+    │                  │
+  YOLODetector   ImageBeaconDetector
+    │                  │
+    └────────┬─────────┘
              ↓
        DetectionResult
 
-The MockDetector provides deterministic, physics-aware detection using the
-known target position. It simulates confidence variation, occasional misses,
-and bounding-box noise to give the full pipeline a realistic workout.
+ImageBeaconDetector is the default: it operates ONLY on the rendered
+camera frame (threshold + weighted centroid). It never sees the
+ground-truth target position — the true projection is used solely for
+scoring (centroiding_error telemetry), never as the measurement.
 
-When a real YOLO model is available, drop in YOLODetector and the rest of
-the pipeline is unchanged.
+YOLODetector keeps the same interface: drop in a trained model and the
+rest of the pipeline is unchanged.
 """
 import math
-import random
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
+
+import numpy as np
 
 
 @dataclass
@@ -40,7 +42,7 @@ class DetectionResult:
     centroid_y: float
     timestamp: float
     inference_ms: float
-    detector: str   # 'yolo' | 'mock'
+    detector: str   # 'image' | 'yolo'
 
     def to_dict(self) -> dict:
         return {
@@ -64,155 +66,134 @@ class DetectionResult:
 
 
 class DetectorInterface(ABC):
-    """Abstract base class — all detectors must implement detect()."""
+    """All detectors consume a camera frame and return a centroid."""
 
     @abstractmethod
-    def detect(
-        self,
-        pixel_x: float,
-        pixel_y: float,
-        image_w: int,
-        image_h: int,
-        noise_scale: float = 0.0,
-        target_visible: bool = True,
-    ) -> Optional[DetectionResult]:
+    def detect_frame(self, frame: np.ndarray) -> Optional[DetectionResult]:
         """
-        Attempt to detect the beacon.
-
-        Args:
-            pixel_x, pixel_y  : True pixel position (from camera projection)
-            image_w, image_h  : Frame resolution
-            noise_scale       : Added measurement noise (0-1)
-            target_visible    : Whether the target is actually in frame
-
-        Returns:
-            DetectionResult or None if not detected
+        Detect the beacon in a HxW float32 image (0..1).
+        Returns DetectionResult or None when nothing is found.
+        Must not use any ground-truth position information.
         """
 
 
-class MockDetector(DetectorInterface):
+class ImageBeaconDetector(DetectorInterface):
     """
-    Deterministic mock detector for when a real YOLO model is unavailable.
-
-    Behaviour:
-      - Uses known pixel position ± Gaussian noise
-      - Confidence follows a sigmoid of angular proximity to frame centre
-      - Random misses at rate proportional to noise_scale
-      - Sub-pixel accuracy degrades gracefully with noise
+    Robust brightest-cluster beacon detector:
+      1. global argmax -> seed pixel (beacon is the brightest object)
+      2. local window around seed, threshold inside window
+      3. intensity-weighted centroid of the cluster
+      4. confidence from peak strength + cluster size match
     """
 
-    NOMINAL_CONFIDENCE = 0.94
-    MISS_RATE_BASE = 0.02        # base miss probability per frame
-    BBOX_SIZE = 24               # nominal bounding box half-size, pixels
-    NOISE_PX_SIGMA = 3.0         # pixels of Gaussian centroid noise
+    THRESHOLD = 0.40       # spot intensity floor (bg/stars stay < 0.2)
+    MIN_PIXELS = 3         # smaller clusters are rejected as noise
+    WINDOW = 26            # local analysis window, pixels
 
-    def detect(
-        self,
-        pixel_x: float,
-        pixel_y: float,
-        image_w: int,
-        image_h: int,
-        noise_scale: float = 0.0,
-        target_visible: bool = True,
-    ) -> Optional[DetectionResult]:
+    def __init__(self, target_id: str = 'BEACON-01', expected_size_px: float = 10.0):
+        self._target_id = target_id
+        self._expected = max(expected_size_px, 2.0)
+
+    def set_target(self, target_id: str, expected_size_px: float) -> None:
+        self._target_id = target_id
+        self._expected = max(expected_size_px, 2.0)
+
+    def detect_frame(self, frame: np.ndarray) -> Optional[DetectionResult]:
         t0 = time.perf_counter()
+        h, w = frame.shape[:2]
 
-        if not target_visible:
+        # 1. brightest pixel seeds the search
+        flat_idx = int(np.argmax(frame))
+        sy, sx = flat_idx // w, flat_idx % w
+        peak = float(frame[sy, sx])
+        if peak < self.THRESHOLD:
             return None
 
-        # Random miss based on noise
-        miss_prob = self.MISS_RATE_BASE + noise_scale * 0.25
-        if random.random() < miss_prob:
+        # 2. local window + threshold
+        hw = self.WINDOW // 2
+        x0, x1 = max(sx - hw, 0), min(sx + hw + 1, w)
+        y0, y1 = max(sy - hw, 0), min(sy + hw + 1, h)
+        window = frame[y0:y1, x0:x1]
+        mask = window >= self.THRESHOLD * 0.75
+        count = int(np.count_nonzero(mask))
+        if count < self.MIN_PIXELS:
             return None
 
-        # Add measurement noise
-        sigma = self.NOISE_PX_SIGMA * (1 + noise_scale * 5.0)
-        cx = pixel_x + random.gauss(0, sigma)
-        cy = pixel_y + random.gauss(0, sigma)
+        # 3. intensity-weighted centroid inside the window
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        weights = window * mask
+        wsum = float(np.sum(weights))
+        if wsum <= 0:
+            return None
+        cx = float(np.sum(xx * weights) / wsum)
+        cy = float(np.sum(yy * weights) / wsum)
 
-        # Confidence — higher near frame centre, degrades near edges
-        norm_x = abs(cx - image_w / 2) / (image_w / 2)
-        norm_y = abs(cy - image_h / 2) / (image_h / 2)
-        proximity = 1.0 - 0.5 * (norm_x + norm_y)
-        confidence = self.NOMINAL_CONFIDENCE * proximity
-        confidence *= (1.0 - noise_scale * 0.3)
-        confidence += random.gauss(0, 0.015)
-        confidence = max(0.0, min(1.0, confidence))
+        # cluster extent -> bounding box
+        ys, xs = np.nonzero(mask)
+        bx0, bx1 = x0 + int(xs.min()), x0 + int(xs.max()) + 1
+        by0, by1 = y0 + int(ys.min()), y0 + int(ys.max()) + 1
 
-        # Bounding box around centroid
-        half = self.BBOX_SIZE * (1 + noise_scale * 0.5)
-        bbox_x = cx - half
-        bbox_y = cy - half
-        bbox_w = half * 2
-        bbox_h = half * 2
+        # 4. confidence from peak + size agreement with expected spot
+        area = (bx1 - bx0) * (by1 - by0)
+        expected_area = self._expected * self._expected
+        size_match = min(area, expected_area) / max(area, expected_area)
+        confidence = max(0.0, min(1.0, 0.35 + 0.45 * peak + 0.20 * size_match))
 
-        t1 = time.perf_counter()
-        inference_ms = (t1 - t0) * 1000.0 + random.uniform(2.0, 8.0)
-
+        inference_ms = (time.perf_counter() - t0) * 1000.0
         return DetectionResult(
-            target_id='BEACON-01',
+            target_id=self._target_id,
             cls='optical_beacon',
             confidence=confidence,
-            bbox_x=bbox_x,
-            bbox_y=bbox_y,
-            bbox_w=bbox_w,
-            bbox_h=bbox_h,
+            bbox_x=float(bx0),
+            bbox_y=float(by0),
+            bbox_w=float(bx1 - bx0),
+            bbox_h=float(by1 - by0),
             centroid_x=cx,
             centroid_y=cy,
             timestamp=time.time(),
             inference_ms=inference_ms,
-            detector='mock',
+            detector='image',
         )
 
 
 class YOLODetector(DetectorInterface):
     """
-    Placeholder for real YOLO model integration.
+    Plug-in point for a trained YOLO beacon model.
 
     To activate:
-      1. Install ultralytics: pip install ultralytics
-      2. Provide a trained model path (e.g. best.pt)
-      3. Replace MockDetector with YOLODetector in engine.py
+      1. pip install ultralytics
+      2. provide a trained model path (e.g. best.pt)
+      3. start the engine with use_yolo=True + model path
 
-    The detect() signature is identical to MockDetector — no other
-    pipeline changes are required.
+    Falls back to ImageBeaconDetector when the model is unavailable.
     """
 
     def __init__(self, model_path: str = 'models/beacon_yolo.pt'):
         self._available = False
+        self._fallback = ImageBeaconDetector()
         try:
             from ultralytics import YOLO
             self._model = YOLO(model_path)
             self._available = True
         except Exception as e:
-            print(f'[YOLODetector] Model unavailable: {e}. Falling back to MockDetector.')
-            self._fallback = MockDetector()
+            print(f'[YOLODetector] Model unavailable: {e}. Falling back to image detector.')
 
-    def detect(
-        self,
-        pixel_x: float,
-        pixel_y: float,
-        image_w: int,
-        image_h: int,
-        noise_scale: float = 0.0,
-        target_visible: bool = True,
-    ) -> Optional[DetectionResult]:
+    def detect_frame(self, frame: np.ndarray) -> Optional[DetectionResult]:
         if not self._available:
-            return self._fallback.detect(
-                pixel_x, pixel_y, image_w, image_h, noise_scale, target_visible)
-
-        # Real YOLO inference would go here — generate a frame from the
-        # virtual camera, pass it to self._model(), parse results.
-        # This skeleton is ready to be completed with real inference code.
+            return self._fallback.detect_frame(frame)
+        # Real YOLO inference on the virtual-camera frame goes here:
+        #   results = self._model((frame * 255).astype(np.uint8))
+        #   ... parse boxes, take highest-confidence 'beacon' class ...
         raise NotImplementedError(
-            'Real YOLO inference not yet implemented. '
-            'Connect camera frame generation here.')
+            'Real YOLO inference not yet wired. '
+            'Parse model boxes into a DetectionResult here.')
 
 
 def create_detector(use_yolo: bool = False, model_path: str = '') -> DetectorInterface:
-    """Factory — returns the appropriate detector."""
+    """Factory — image-based detector by default, YOLO when available."""
     if use_yolo:
-        d = YOLODetector(model_path)
+        d = YOLODetector(model_path or 'models/beacon_yolo.pt')
         if getattr(d, '_available', False):
             return d
-    return MockDetector()
+        return d._fallback
+    return ImageBeaconDetector()

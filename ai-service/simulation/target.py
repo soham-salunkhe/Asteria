@@ -3,11 +3,12 @@ FSOC PAT — Virtual Optical Beacon / Target
 Simulates a moving optical beacon with configurable trajectory.
 """
 import math
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Literal
 
-TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk', 'figure_8']
+TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk', 'figure_8', 'spiral']
 
 
 @dataclass
@@ -33,6 +34,10 @@ class TargetConfig:
     velocity: Vec3 = field(default_factory=lambda: Vec3(2.0, 0.5, 0.0))
     trajectory: TrajectoryType = 'sinusoidal'
     intensity: float = 0.95   # beacon luminance 0-1
+    # Beacon spot geometry (PS169-compatible defaults: 640x480, ~10 px spot)
+    beacon_size_px: float = 10.0
+    beacon_shape: str = 'square'   # 'square' | 'circle'
+    beacon_offset: Vec3 = field(default_factory=lambda: Vec3(0.0, 0.0, 0.0))
     # Sinusoidal / circular parameters
     amplitude_h: float = 80.0   # metres
     amplitude_v: float = 40.0   # metres
@@ -113,8 +118,21 @@ class Target:
             self._velocity.x = cfg.amplitude_h * omega * math.cos(omega * t)
             self._velocity.y = cfg.amplitude_v * 2 * omega * math.cos(2 * omega * t + math.pi / 2)
 
+        elif cfg.trajectory == 'spiral':
+            # Outward spiral in the X/Y plane, one full turn per period,
+            # radius grows from 15% to 100% of amplitude then wraps.
+            omega = 2.0 * math.pi / cfg.period
+            frac = (t % cfg.period) / cfg.period if cfg.period > 0 else 0.0
+            radius = 0.15 + 0.85 * frac
+            ang = omega * t
+            prev_x, prev_y = self._position.x, self._position.y
+            self._position.x = self._origin.x + cfg.amplitude_h * radius * math.cos(ang)
+            self._position.y = self._origin.y + cfg.amplitude_v * radius * math.sin(ang)
+            if dt > 0:
+                self._velocity.x = (self._position.x - prev_x) / dt
+                self._velocity.y = (self._position.y - prev_y) / dt
+
         elif cfg.trajectory == 'random_walk':
-            import random
             acc_x = random.gauss(0, 0.5) * (1 + velocity_variation)
             acc_y = random.gauss(0, 0.3) * (1 + velocity_variation)
             self._rw_vx = max(-8, min(8, self._rw_vx + acc_x * dt))
@@ -125,7 +143,6 @@ class Target:
             self._velocity.y = self._rw_vy
 
     def _noise(self) -> float:
-        import random
         return random.gauss(0, 0.1)
 
     # ── Properties ────────────────────────────────────────────

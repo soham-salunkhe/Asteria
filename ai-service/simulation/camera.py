@@ -84,6 +84,16 @@ class Camera:
     def tilt(self) -> float:
         return self._tilt
 
+    @property
+    def pan_rate(self) -> float:
+        """Last applied pan rate, deg/s."""
+        return self._pan_rate
+
+    @property
+    def tilt_rate(self) -> float:
+        """Last applied tilt rate, deg/s."""
+        return self._tilt_rate
+
     def apply_correction(self, dpan: float, dtilt: float, dt: float) -> None:
         """Apply pan/tilt rate corrections (deg/s * dt)."""
         new_pan = self._pan + dpan
@@ -136,12 +146,12 @@ class Camera:
         dot = max(-1.0, min(1.0, dot))
 
         # Angle in the image plane
-        # Project target onto image plane coordinates
-        # Right vector: cross(axis, up)
+        # Camera basis: right = up x axis, local-up = axis x right
+        # (right-handed, so +pan moves the spot right, +tilt moves it up)
         up = (0.0, 1.0, 0.0)
-        right_x = ay * up[2] - az * up[1]
-        right_y = az * up[0] - ax * up[2]
-        right_z = ax * up[1] - ay * up[0]
+        right_x = up[1] * az - up[2] * ay
+        right_y = up[2] * ax - up[0] * az
+        right_z = up[0] * ay - up[1] * ax
         rlen = math.sqrt(right_x**2 + right_y**2 + right_z**2)
         if rlen < 1e-6:
             return None
@@ -149,10 +159,10 @@ class Camera:
         right_y /= rlen
         right_z /= rlen
 
-        # Local up: cross(right, axis)
-        lup_x = right_y * az - right_z * ay
-        lup_y = right_z * ax - right_x * az
-        lup_z = right_x * ay - right_y * ax
+        # Local up: cross(axis, right)
+        lup_x = ay * right_z - az * right_y
+        lup_y = az * right_x - ax * right_z
+        lup_z = ax * right_y - ay * right_x
 
         # Project target onto local frame
         ang_h = math.degrees(math.atan2(

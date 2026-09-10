@@ -118,6 +118,19 @@ class PIDController:
         self._pan_axis.config = config
         self._tilt_axis.config = config
 
+    def coast(self) -> dict:
+        """No measurement available: hold position (zero correction)."""
+        self._settled = False
+        return {
+            'pan_correction': 0.0,
+            'tilt_correction': 0.0,
+            'pan_integral': round(self._pan_axis.integral, 4),
+            'tilt_integral': round(self._tilt_axis.integral, 4),
+            'pan_derivative': round(self._pan_axis.derivative, 4),
+            'tilt_derivative': round(self._tilt_axis.derivative, 4),
+            'settled': self._settled,
+        }
+
     def reset(self) -> None:
         self._pan_axis.reset()
         self._tilt_axis.reset()

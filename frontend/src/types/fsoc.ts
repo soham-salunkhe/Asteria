@@ -55,6 +55,12 @@ export interface TargetState3D {
   image_position: Vec2 | null;
   timestamp: number;
   is_primary?: boolean;
+  /** Beacon spot geometry driving the synthetic camera image */
+  beacon?: {
+    size_px: number;
+    shape: string;
+    intensity: number;
+  };
 }
 
 // ── Camera ────────────────────────────────────────────────────
@@ -121,7 +127,7 @@ export interface DetectionResult {
   /** Processing time ms */
   inference_ms: number;
   /** Which detector was used */
-  detector: 'yolo' | 'mock';
+  detector: 'yolo' | 'mock' | 'image';
 }
 
 // ── Kalman filter ─────────────────────────────────────────────
@@ -148,6 +154,18 @@ export interface AngularError {
   total_error: number;
 }
 
+export interface PixelError {
+  x: number | null;
+  y: number | null;
+  /** Euclidean magnitude, pixels */
+  total: number | null;
+}
+
+export interface PS169Item {
+  value: number | null;
+  pass: boolean;
+}
+
 // ── PID controller ────────────────────────────────────────────
 
 export interface PIDConfig {
@@ -168,6 +186,9 @@ export interface PIDOutput {
   pan_derivative: number;
   tilt_derivative: number;
   settled: boolean;
+  /** Kalman velocity feedforward rates, deg/s */
+  ff_pan_rate?: number;
+  ff_tilt_rate?: number;
 }
 
 // ── Disturbances ──────────────────────────────────────────────
@@ -247,6 +268,13 @@ export interface TelemetryFrame {
   kalman: KalmanState | null;
 
   angular_error: AngularError;
+  /** Image-space error vs frame centre, pixels (drives the PID) */
+  pixel_error?: PixelError | null;
+  /** Operator-injected target shift, metres (3D move → loop) */
+  target_offset?: Vec3;
+  /** 'virtual' | 'video_input' */
+  source?: string;
+  video_progress?: number;
   pid_output: PIDOutput;
 
   disturbance: DisturbanceState;
@@ -268,6 +296,14 @@ export interface FrameMetrics {
   average_error: number;
   max_error: number;
   lock_retention: number;
+  /** Tracking-phase image-space error, pixels — null before tracking */
+  average_error_px: number | null;
+  max_error_px: number | null;
+  /** Frames with no valid measurement, % */
+  target_loss_pct: number;
+  avg_reacquisition_time: number | null;
+  /** PS169 benchmark evaluation (all values measured live) */
+  ps169?: Record<string, PS169Item>;
 }
 
 // ── Event log ─────────────────────────────────────────────────

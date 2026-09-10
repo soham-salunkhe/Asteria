@@ -24,7 +24,7 @@ interface Props {
 
 export function SimulationViewport({ frame, history }: Props) {
   return (
-    <div style={{ width: '100%', height: '100%', background: '#080a0c' }}>
+    <div style={{ width: '100%', height: '100%', background: '#101a29' }}>
       <Suspense
         fallback={
           <div className="sim3d-fallback">Loading 3-D engine…</div>

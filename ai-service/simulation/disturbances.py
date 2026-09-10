@@ -33,6 +33,7 @@ class CameraMotion:
 class SensorNoise:
     enabled: bool = False
     noise_level: float = 0.05   # 0-1
+    noise_type: str = 'gaussian'  # 'gaussian' | 'salt_pepper' | 'poisson'
 
 
 @dataclass
@@ -77,7 +78,6 @@ class DisturbanceEngine:
 
         dpan = 0.0
         dtilt = 0.0
-        noise_scale = 0.0
 
         cfg = self.config
 
@@ -110,8 +110,12 @@ class DisturbanceEngine:
             dtilt += random.gauss(0, sigma * 0.7)
 
         # ── Sensor noise ───────────────────────────────────
+        # Applied to the rendered camera image only (observation),
+        # never to the ground-truth target state.
+        noise_level = 0.0
+        noise_type = cfg.sensor_noise.noise_type
         if cfg.sensor_noise.enabled:
-            noise_scale = cfg.sensor_noise.noise_level
+            noise_level = cfg.sensor_noise.noise_level
 
         # ── Target motion variation ────────────────────────
         vel_var = 0.0
@@ -143,7 +147,9 @@ class DisturbanceEngine:
         return {
             'dpan': dpan,
             'dtilt': dtilt,
-            'noise_scale': noise_scale,
+            'noise_level': noise_level,
+            'noise_type': noise_type,
+            'noise_scale': noise_level,  # legacy alias
             'velocity_variation': vel_var,
             'total_disturbance_index': round(total_index, 4),
             'active_count': active_count,
@@ -174,6 +180,7 @@ class DisturbanceEngine:
             'sensor_noise': {
                 'enabled': c.sensor_noise.enabled,
                 'noise_level': c.sensor_noise.noise_level,
+                'noise_type': c.sensor_noise.noise_type,
             },
             'target_motion_variation': {
                 'enabled': c.target_motion_variation.enabled,

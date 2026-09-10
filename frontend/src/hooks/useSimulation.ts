@@ -88,6 +88,9 @@ function useSimulationState() {
   const updateCamera = useCallback((pan: number, tilt: number) =>
     fsocApi.updateCamera(pan, tilt), []);
 
+  const setTargetOffset = useCallback((x: number, y: number, z: number) =>
+    fsocApi.setTargetOffset(x, y, z), []);
+
   return {
     wsStatus,
     latest,
@@ -105,6 +108,7 @@ function useSimulationState() {
     updateDisturbances,
     updatePID,
     updateCamera,
+    setTargetOffset,
   };
 }
 
