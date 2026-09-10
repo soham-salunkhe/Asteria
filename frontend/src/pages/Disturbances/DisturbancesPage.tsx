@@ -84,9 +84,9 @@ export function DisturbancesPage() {
             className="di-bar-fill"
             style={{
               width: `${totalIndex * 100}%`,
-              background: totalIndex > 0.6 ? '#c05050'
-                        : totalIndex > 0.3 ? '#e0a040'
-                        : '#4caf82',
+              background: totalIndex > 0.6 ? '#a86a5a'
+                        : totalIndex > 0.3 ? '#e39a32'
+                        : '#8fa98f',
             }}
           />
         </div>
@@ -195,14 +195,14 @@ export function DisturbancesPage() {
             <div className="chart-title">Tracking Error + Disturbance Index (last {CHART_WINDOW} frames)</div>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="#1a2a2a" strokeDasharray="2 4" />
+                <CartesianGrid stroke="#242b30" strokeDasharray="2 4" />
                 <XAxis dataKey="i" tick={false} />
-                <YAxis stroke="#4a5a5a" tick={{ fill: '#6b7f80', fontSize: 10 }} />
+                <YAxis stroke="#3a464d" tick={{ fill: '#626a6d', fontSize: 10 }} />
                 <Tooltip
-                  contentStyle={{ background: '#0e1717', border: '1px solid #1e2c2c', fontSize: 11 }}
+                  contentStyle={{ background: '#0d1013', border: '1px solid #3a464d', fontSize: 11, borderRadius: 0 }}
                 />
-                <Line type="monotone" dataKey="error"       stroke="#c05050" dot={false} strokeWidth={1.5} name="Angular Error (°)" />
-                <Line type="monotone" dataKey="disturbance" stroke="#e0a040" dot={false} strokeWidth={1}   name="Disturbance ×5" />
+                <Line type="monotone" dataKey="error"       stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Angular Error (°)" />
+                <Line type="monotone" dataKey="disturbance" stroke="#8d9195" dot={false} strokeWidth={1}   name="Disturbance ×5" />
               </LineChart>
             </ResponsiveContainer>
           </div>

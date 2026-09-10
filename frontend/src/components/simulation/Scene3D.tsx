@@ -370,10 +370,10 @@ export default function Scene3D({ frame, history }: Props) {
       camera={{ position: [4.8, 2.8, 7.4], fov: 43, near: 0.01, far: 100 }}
       gl={{ antialias: true, alpha: false, logarithmicDepthBuffer: true }}
       dpr={[1, 2]}
-      style={{ background: '#05090b', width: '100%', height: '100%' }}
+      style={{ background: '#080a0c', width: '100%', height: '100%' }}
     >
-      <color attach="background" args={['#05090b']} />
-      <fog attach="fog" args={['#05090b', 11, 34]} />
+      <color attach="background" args={['#080a0c']} />
+      <fog attach="fog" args={['#080a0c', 11, 34]} />
       <ambientLight intensity={0.11} color="#b2c8c5" />
       <directionalLight position={[-5, 3, 4]} intensity={2.3} color="#fff5db" castShadow />
       <directionalLight position={[4, -2, -4]} intensity={0.18} color="#5e8294" />

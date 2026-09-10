@@ -1,7 +1,8 @@
 /**
- * FSOC Virtual PAT — Application Root
- * Preserves Firebase/AuthContext from MICHIRA.
- * New FSOC routing with sidebar layout.
+ * FSOC·TRACK — Application Root
+ * Landing page at "/" (public, no auth required).
+ * Virtual environment at "/mission", "/tracking", etc. (LOGIN REQUIRED).
+ * Users CANNOT access the virtual environment before logging in.
  */
 import React from 'react';
 import {
@@ -14,6 +15,7 @@ import { AuthProvider }       from './context/AuthContext';
 import { useAuth }            from './context/AuthContext';
 import { SimulationProvider, useSimulation } from './hooks/useSimulation';
 import { SideNav }            from './components/layout/SideNav';
+import { LandingPage }        from './pages/LandingPage';
 import { LoginPage }          from './pages/LoginPage';
 import { SignUpPage }         from './pages/SignUpPage';
 import { ResetPasswordPage }  from './pages/ResetPasswordPage';
@@ -28,11 +30,16 @@ import { SettingsPage }       from './pages/Settings/SettingsPage';
 import { CopilotPage }        from './pages/Copilot/CopilotPage';
 
 // ── Auth guard ────────────────────────────────────────────────
+// Redirects unauthenticated users to /login with ?redirect=
+// so they return to the intended page after signing in.
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, authLoading } = useAuth();
   if (authLoading) return <div className="fsoc-loading">Authenticating…</div>;
-  if (!isLoggedIn) return <Navigate to="/login" replace />;
+  if (!isLoggedIn) {
+    const redirect = window.location.pathname + window.location.search;
+    return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />;
+  }
   return <>{children}</>;
 }
 
@@ -68,12 +75,15 @@ function AppShell() {
 function AppRoutes() {
   return (
     <Routes>
-      {/* Auth pages — no sidebar */}
-      <Route path="/login"          element={<LoginPage />} />
-      <Route path="/signup"         element={<SignUpPage />} />
+      {/* ── Public landing page ─────────────────────────────── */}
+      <Route path="/"              element={<LandingPage />} />
+
+      {/* ── Auth pages (no sidebar) ─────────────────────────── */}
+      <Route path="/login"         element={<LoginPage />} />
+      <Route path="/signup"        element={<SignUpPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-      {/* Authenticated shell */}
+      {/* ── Protected virtual environment (LOGIN REQUIRED) ──── */}
       <Route
         path="/*"
         element={

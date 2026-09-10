@@ -138,16 +138,16 @@ export function CameraControlPage() {
             <div className="cam-pos-label">CAMERA POSITION</div>
             <div className="cam-pos-circle">
               <svg width="120" height="120" viewBox="-60 -60 120 120">
-                <circle cx="0" cy="0" r="55" stroke="#1e2c2c" strokeWidth="1" fill="none" />
-                <circle cx="0" cy="0" r="37" stroke="#1e2c2c" strokeWidth="1" fill="none" />
-                <circle cx="0" cy="0" r="18" stroke="#1e2c2c" strokeWidth="1" fill="none" />
-                <line x1="-55" y1="0" x2="55" y2="0" stroke="#1e2c2c" strokeWidth="0.5" />
-                <line x1="0" y1="-55" x2="0" y2="55" stroke="#1e2c2c" strokeWidth="0.5" />
+                <circle cx="0" cy="0" r="55" stroke="#242b30" strokeWidth="1" fill="none" />
+                <circle cx="0" cy="0" r="37" stroke="#242b30" strokeWidth="1" fill="none" />
+                <circle cx="0" cy="0" r="18" stroke="#242b30" strokeWidth="1" fill="none" />
+                <line x1="-55" y1="0" x2="55" y2="0" stroke="#242b30" strokeWidth="0.5" />
+                <line x1="0" y1="-55" x2="0" y2="55" stroke="#242b30" strokeWidth="0.5" />
                 <circle
                   cx={normalize(currentPan, -180, 180) / 100 * 110 - 55}
                   cy={-(normalize(currentTilt, -90, 90) / 100 * 110 - 55)}
                   r="5"
-                  fill="#3ecfcf"
+                  fill="#d98618"
                 />
               </svg>
               <div className="cam-pos-labels">
@@ -164,16 +164,16 @@ export function CameraControlPage() {
             <div className="chart-title">Target Angle vs Camera Angle</div>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="#1a2a2a" strokeDasharray="2 4" />
+                <CartesianGrid stroke="#242b30" strokeDasharray="2 4" />
                 <XAxis dataKey="i" tick={false} />
-                <YAxis stroke="#4a5a5a" tick={{ fill: '#6b7f80', fontSize: 10 }} />
+                <YAxis stroke="#3a464d" tick={{ fill: '#626a6d', fontSize: 10 }} />
                 <Tooltip
-                  contentStyle={{ background: '#0e1717', border: '1px solid #1e2c2c', fontSize: 11 }}
-                  labelStyle={{ color: '#6b7f80' }}
+                  contentStyle={{ background: '#0d1013', border: '1px solid #3a464d', fontSize: 11, borderRadius: 0 }}
+                  labelStyle={{ color: '#8d9195' }}
                 />
-                <Legend wrapperStyle={{ fontSize: 10, color: '#6b7f80' }} />
-                <Line type="monotone" dataKey="pan"  stroke="#3ecfcf" dot={false} strokeWidth={1.5} name="Pan" />
-                <Line type="monotone" dataKey="tilt" stroke="#e0a040" dot={false} strokeWidth={1.5} name="Tilt" />
+                <Legend wrapperStyle={{ fontSize: 10, color: '#8d9195' }} />
+                <Line type="monotone" dataKey="pan"  stroke="#d98618" dot={false} strokeWidth={1.5} name="Pan" />
+                <Line type="monotone" dataKey="tilt" stroke="#8d9195" dot={false} strokeWidth={1.5} name="Tilt" />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -182,16 +182,16 @@ export function CameraControlPage() {
             <div className="chart-title">Control Error vs Time</div>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={chartData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                <CartesianGrid stroke="#1a2a2a" strokeDasharray="2 4" />
+                <CartesianGrid stroke="#242b30" strokeDasharray="2 4" />
                 <XAxis dataKey="i" tick={false} />
-                <YAxis stroke="#4a5a5a" tick={{ fill: '#6b7f80', fontSize: 10 }} />
+                <YAxis stroke="#3a464d" tick={{ fill: '#626a6d', fontSize: 10 }} />
                 <Tooltip
-                  contentStyle={{ background: '#0e1717', border: '1px solid #1e2c2c', fontSize: 11 }}
-                  labelStyle={{ color: '#6b7f80' }}
+                  contentStyle={{ background: '#0d1013', border: '1px solid #3a464d', fontSize: 11, borderRadius: 0 }}
+                  labelStyle={{ color: '#8d9195' }}
                 />
-                <Legend wrapperStyle={{ fontSize: 10, color: '#6b7f80' }} />
-                <Line type="monotone" dataKey="panErr"  stroke="#c05050" dot={false} strokeWidth={1.5} name="Pan Error" />
-                <Line type="monotone" dataKey="tiltErr" stroke="#4caf82" dot={false} strokeWidth={1.5} name="Tilt Error" />
+                <Legend wrapperStyle={{ fontSize: 10, color: '#8d9195' }} />
+                <Line type="monotone" dataKey="panErr"  stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Pan Error" />
+                <Line type="monotone" dataKey="tiltErr" stroke="#8fa98f" dot={false} strokeWidth={1.5} name="Tilt Error" />
               </LineChart>
             </ResponsiveContainer>
           </div>

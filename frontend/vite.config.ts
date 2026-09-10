@@ -7,18 +7,46 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy FSOC Python backend REST calls
-      '/api/simulation': 'http://localhost:8000',
-      '/api/scenarios':  'http://localhost:8000',
-      '/api/runs':       'http://localhost:8000',
-      '/api/reports':    'http://localhost:8000',
-      '/api/health':     'http://localhost:8000',
-      // WebSocket proxy
+      '/api/simulation': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/scenarios': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/runs': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/reports': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/api/health': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      // WebSocket proxy with better error handling
       '/ws': {
         target: 'ws://localhost:8000',
         ws: true,
+        changeOrigin: true,
+        // Suppress proxy errors in console
+        configure: (proxy, _options) => {
+          proxy.on('error', (err, _req, _res) => {
+            console.log('[Vite WS Proxy] Error (non-fatal):', err.message);
+          });
+          proxy.on('proxyReqWs', (_proxyReq, _req, _socket) => {
+            console.log('[Vite WS Proxy] WebSocket proxying...');
+          });
+        },
       },
       // Node backend (Gemini guide, old routes)
-      '/api/guide':      'http://localhost:5001',
+      '/api/guide': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+      },
     },
   },
 })

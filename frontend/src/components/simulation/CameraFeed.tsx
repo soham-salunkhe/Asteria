@@ -15,13 +15,13 @@ import React, { useRef, useEffect } from 'react';
 import type { TelemetryFrame, TargetState } from '../../types/fsoc';
 
 const STATE_COLOR: Record<TargetState, string> = {
-  READY: '#6b7f80', SEARCHING: '#e0a040', DETECTED: '#5fb3c0',
-  ACQUIRING: '#5fb3c0', TRACKING: '#4caf82', LOCKED: '#4caf82',
-  LOST: '#c05050', REACQUIRING: '#e0a040', ERROR: '#c05050',
+  READY: '#626a6d', SEARCHING: '#e39a32', DETECTED: '#f0b35a',
+  ACQUIRING: '#f0b35a', TRACKING: '#8fa98f', LOCKED: '#8fa98f',
+  LOST: '#a86a5a', REACQUIRING: '#e39a32', ERROR: '#a86a5a',
 };
 
-// Pre-generate a static star field seed so it stays stable
-const STARS = Array.from({ length: 120 }, (_, i) => ({
+// Pre-generate a sparse static star field — minimal, terminal-style
+const STARS = Array.from({ length: 42 }, (_, i) => ({
   x: ((i * 137.508 + 50) % 640),
   y: ((i * 97.3 + 30)  % 480),
   r: 0.4 + (i % 5) * 0.25,
@@ -108,23 +108,22 @@ export function CameraFeed({
     const CY = H / 2;
 
     const state = (frame?.target_state ?? 'READY') as TargetState;
-    const stateColor = STATE_COLOR[state] ?? '#6b7f80';
+    const stateColor = STATE_COLOR[state] ?? '#626a6d';
     const isLocked = state === 'LOCKED' || state === 'TRACKING';
 
     // ── 1. Scene background ──────────────────────────────────
-    // Deep space / dusk sky gradient
+    // Deep-space terminal black, neutral (no teal/green cast)
     const skyGrad = ctx.createLinearGradient(0, 0, 0, H);
-    skyGrad.addColorStop(0,   '#05080a');
-    skyGrad.addColorStop(0.4, '#08131a');
-    skyGrad.addColorStop(0.7, '#0c1c14');
-    skyGrad.addColorStop(1,   '#091410');
+    skyGrad.addColorStop(0,   '#080a0c');
+    skyGrad.addColorStop(0.55,'#0b0e11');
+    skyGrad.addColorStop(1,   '#0d1013');
     ctx.fillStyle = skyGrad;
     ctx.fillRect(0, 0, W, H);
 
-    // Horizon glow (simulate ground reflection / atmosphere)
+    // Horizon glow (faint warm amber, terminal-style)
     const horizGrad = ctx.createLinearGradient(0, H * 0.6, 0, H);
     horizGrad.addColorStop(0, 'rgba(0,0,0,0)');
-    horizGrad.addColorStop(1, 'rgba(20,40,30,0.4)');
+    horizGrad.addColorStop(1, 'rgba(217,134,24,0.08)');
     ctx.fillStyle = horizGrad;
     ctx.fillRect(0, H * 0.6, W, H * 0.4);
 
@@ -134,7 +133,7 @@ export function CameraFeed({
       const twinkle = frame ? 0.6 + 0.4 * Math.sin((frame.frame_id ?? 0) * 0.1 + s.x) : s.a;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(200,220,220,${s.a * twinkle})`;
+      ctx.fillStyle = `rgba(232,228,220,${(s.a * twinkle * 0.55).toFixed(3)})`;
       ctx.fill();
     });
 
@@ -287,7 +286,7 @@ export function CameraFeed({
         }
 
         // Secondary target ID label
-        ctx.fillStyle = '#e0a040';
+        ctx.fillStyle = '#e39a32';
         ctx.font = 'bold 9px "Courier New", monospace';
         ctx.fillText(`${st.id} [SEC]`, sx + 10, sy - 6);
 
@@ -488,7 +487,7 @@ export function CameraFeed({
 
     // Angular error arc around reticle
     if (errMag > 0.01) {
-      const arcColor = errMag > 0.4 ? '#c05050' : errMag > 0.15 ? '#e0a040' : '#4caf82';
+      const arcColor = errMag > 0.4 ? '#a86a5a' : errMag > 0.15 ? '#e39a32' : '#8fa98f';
       ctx.strokeStyle = arcColor + 'aa';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
@@ -546,7 +545,7 @@ export function CameraFeed({
       ctx.textAlign = 'right';
       ctx.fillText(`PAN   ${pe}°`, W - 12, H - 36);
       ctx.fillText(`TILT  ${te}°`, W - 12, H - 24);
-      const errClr = parseFloat(tot) > 2 ? '#c05050' : parseFloat(tot) > 0.5 ? '#e0a040' : '#4caf82';
+      const errClr = parseFloat(tot) > 2 ? '#a86a5a' : parseFloat(tot) > 0.5 ? '#e39a32' : '#8fa98f';
       ctx.fillStyle = errClr;
       ctx.font = hudFont;
       ctx.fillText(`ERR  ${tot}°`, W - 12, H - 10);

@@ -1,0 +1,355 @@
+/* ============================================================
+   FSOC-PAT · RETRO SPACE COMPUTER TERMINAL — final theme layer
+   Loaded last. Visual-only: square panels, thin 1px borders,
+   amber accents, pixel/mono type, subtle CRT. No logic changes.
+   Palette: #080A0C / #0D1013 / #111417 / #D98618 / #E8E4DC / #8D9195
+   ============================================================ */
+:root {
+  color-scheme: dark;
+  --bg: #080a0c;
+  --bg-1: #0d1013;
+  --bg-2: #111417;
+  --bg-3: #171c20;
+  --border: #242b30;
+  --border-2: #3a464d;
+  --cyan: #d98618;
+  --cyan-dim: #9a6216;
+  --cyan-glow: rgba(217, 134, 24, 0.11);
+  --amber: #e39a32;
+  --amber-bright: #f0b35a;
+  --green: #8fa98f;
+  --red: #a86a5a;
+  --text: #e8e4dc;
+  --text-2: #8d9195;
+  --text-3: #626a6d;
+  --mono: "IBM Plex Mono", "Courier New", monospace;
+  --pixel: "VT323", "IBM Plex Mono", "Courier New", monospace;
+  --sans: "IBM Plex Mono", "Courier New", monospace;
+  --sidenav-w: 246px;
+}
+
+html, body, #root { min-height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  letter-spacing: 0.015em;
+}
+body::before {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  content: "";
+  opacity: 0.05;
+  background: linear-gradient(90deg, transparent 0, rgba(240,179,90,0.05) 50%, transparent 100%);
+}
+
+button, input, select, textarea { border-radius: 0 !important; font-family: var(--mono); letter-spacing: 0.04em; }
+h1, h2, h3, h4, h5, h6 { font-family: var(--mono) !important; letter-spacing: 0.06em !important; text-transform: uppercase; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 1px solid var(--amber-bright);
+  outline-offset: 2px;
+}
+::selection { background: var(--cyan); color: var(--bg); }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-1); }
+::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--cyan-dim); }
+
+/* Pixel display headings (landing hero + terminal titles) */
+.term-pixel {
+  font-family: var(--pixel) !important;
+  font-weight: 400;
+  letter-spacing: 0.02em !important;
+  text-transform: uppercase;
+}
+
+.fsoc-shell { background: var(--bg); }
+.fsoc-main {
+  background: var(--bg);
+  background-image:
+    linear-gradient(rgba(232,228,220,0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232,228,220,0.018) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+.fsoc-loading {
+  height: 100vh;
+  background: var(--bg);
+  color: var(--amber-bright);
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ── Shell + side navigation ─────────────────────────────── */
+.sidenav {
+  width: var(--sidenav-w);
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+}
+.sidenav-logo { min-height: 82px; padding: 18px 18px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+.sidenav-logo-text { display: flex; flex-direction: column; gap: 4px; }
+.sidenav-product { color: var(--text); font: 700 13px/1 var(--mono); letter-spacing: 0.12em; }
+.sidenav-sub { margin-top: 2px; color: var(--cyan); font: 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.sidenav-status-row { padding: 12px 18px 11px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.sidenav-status-dot { width: 5px; height: 5px; border-radius: 0; }
+.sidenav-status-label { color: var(--text-3); font: 9px/1 var(--mono); letter-spacing: 0.08em; }
+.sidenav-divider { height: 1px; background: var(--border); }
+.sidenav-list { padding: 10px 0; }
+.sidenav-item {
+  min-height: 40px;
+  padding: 10px 16px;
+  color: var(--text-2);
+  border-left: 2px solid transparent;
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sidenav-item:hover { background: var(--bg-2); color: var(--text); }
+.sidenav-item--active { background: var(--cyan-glow); border-left-color: var(--cyan); color: var(--amber-bright); }
+.sidenav-index { color: var(--text-3); font: 9px/1 var(--mono); }
+.sidenav-item--active .sidenav-index { color: var(--cyan); }
+.sidenav-icon { opacity: 0.75; }
+.sidenav-item--active .sidenav-icon { opacity: 1; color: var(--amber-bright); }
+.sidenav-badge { background: var(--cyan); color: var(--bg); padding: 2px 5px; border-radius: 0; font: 8px/1 var(--mono); }
+.sidenav-item--copilot { border-top: 1px solid var(--border); margin-top: 5px; padding-top: 12px; }
+.sidenav-user { padding: 14px 16px; border-top: 1px solid var(--border); }
+.sidenav-avatar, .sidenav-avatar-fallback { width: 30px; height: 30px; border-radius: 0; border: 1px solid var(--border-2); }
+.sidenav-avatar-fallback { background: var(--bg-3); color: var(--amber-bright); font: 11px/1 var(--mono); }
+.sidenav-user-name { color: var(--text); font: 10px/1 var(--mono); letter-spacing: 0.03em; }
+.sidenav-logout { color: var(--text-3); font: 9px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.sidenav-logout:hover { color: var(--amber-bright); }
+
+/* ── Shared page chrome ──────────────────────────────────── */
+.page-header {
+  min-height: 82px;
+  padding: 22px 28px 16px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.page-header::before {
+  position: absolute;
+  top: 10px;
+  right: 28px;
+  color: var(--text-3);
+  content: "SYS / MISSION CONTROL";
+  font: 8px/1 var(--mono);
+  letter-spacing: 0.15em;
+}
+.page-title { color: var(--text); font: 700 19px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.page-subtitle { color: var(--cyan); font: 9px/1 var(--mono); letter-spacing: 0.13em; text-transform: uppercase; }
+
+/* ── Buttons: square, thin borders ───────────────────────── */
+.btn-primary, .mc-btn-start, .vp-btn--start {
+  min-height: 34px;
+  background: var(--cyan);
+  border: 1px solid var(--cyan);
+  color: var(--bg);
+  border-radius: 0;
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.btn-primary:hover, .mc-btn-start:hover, .vp-btn--start:hover { background: var(--amber-bright); border-color: var(--amber-bright); color: var(--bg); }
+.btn-secondary, .btn-ghost, .btn-danger, .mc-btn-custom, .mc-btn-config, .mc-btn-ctrl, .mc-qnav-btn, .vp-btn,
+.mc-btn-video {
+  min-height: 32px;
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+  border-radius: 0;
+  font: 10px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.btn-secondary:hover, .btn-ghost:hover, .mc-btn-custom:hover, .mc-btn-config:hover, .mc-btn-ctrl:hover,
+.mc-qnav-btn:hover, .vp-btn:hover, .mc-btn-video:hover,
+.mc-btn-config--active, .vp-btn--active { background: var(--cyan-glow); border-color: var(--cyan); color: var(--amber-bright); }
+.btn-danger { color: var(--red); border-color: rgba(168,106,90,0.55); }
+.btn-danger:hover { background: rgba(168,106,90,0.1); border-color: var(--red); color: var(--red); }
+.mc-btn-pause { border-color: var(--amber); color: var(--amber); }
+.mc-btn-stop { border-color: var(--red); color: var(--red); }
+.mc-btn-track { border-color: var(--cyan); color: var(--amber-bright); }
+.mc-video-name {
+  font-family: var(--mono); font-size: 10px; color: var(--amber-bright);
+  background: var(--cyan-glow); border: 1px solid var(--cyan-dim);
+  padding: 4px 8px; border-radius: 0;
+}
+
+/* ── Panels: dark, 1px borders, square ───────────────────── */
+.tel-panel, .analytics-chart-card, .chart-block, .pid-block, .pid-output-block, .pipeline-block,
+.settings-group, .report-card, .copilot-panel, .dist-block,
+.mc-feed-col, .mc-stats-col, .tracking-sidebar, .tracking-viewport,
+.detection-feed-col, .detection-info-col, .camera-control-col, .camera-charts-col, .camera-pid-col,
+.copilot-context-col, .copilot-chat-col, .reports-list-col, .reports-detail-col,
+.dist-readout-block, .settings-note {
+  background: var(--bg-1) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.tel-panel-title, .chart-card-title, .chart-title, .pipeline-title, .pid-title, .settings-group-title,
+.sidebar-section-title, .detection-feed-label, .cam-pos-label, .cop-ctx-title, .dist-readout-title,
+.rd-title, .mc-section-label, .mc-demo-steps-label {
+  color: var(--cyan) !important;
+  font: 9px/1 var(--mono) !important;
+  letter-spacing: 0.14em !important;
+  text-transform: uppercase !important;
+}
+.tel-label, .bb-label, .pid-out-label, .cam-axis-range, .cam-slider-tick, .setting-label, .event-ts,
+.rl-col, .rd-key, .di-label, .dist-param-label, .dr-label,
+.mc-id-key, .mc-metric-label, .mc-cfg-label, .vstrip-label, .mid-key, .mrow-label {
+  color: var(--text-3) !important;
+  font-family: var(--mono) !important;
+}
+.tel-value, .bb-val, .pid-out-val, .mrow-val, .mid-val, .mc-id-val, .rd-val, .dr-val, .vstrip-val,
+.mc-metric-val, .cam-slider-val, .pid-val {
+  color: var(--text) !important;
+  font-family: var(--mono) !important;
+}
+.tel-value--highlight, .mrow-val--ok, .mc-metric-ok, .pid-settled, .pipe-ok, .state-pill--locked { color: var(--green) !important; }
+.tel-value--warn, .mrow-val--warn, .mc-metric-warn, .rd-id, .cam-axis-label, .cam-axis-current,
+.mc-step-n, .mc-cfg-param-val, .vstrip-val, .dual-pane-badge { color: var(--amber-bright) !important; }
+.event-log, .cop-ctx-pre { background: var(--bg) !important; }
+.event-row, .tel-row, .mrow, .pid-out-row, .setting-row, .rd-row { border-bottom-color: rgba(58,70,77,0.55) !important; }
+
+/* ── Mission / tracking surfaces ─────────────────────────── */
+.mc-root, .page-tracking, .page-detection, .page-camera, .page-analytics,
+.page-settings, .page-reports, .page-disturbances, .page-copilot {
+  background: var(--bg);
+  color: var(--text);
+}
+.mc-root { min-height: 100vh; padding: 18px 22px 22px; }
+.mc-topbar { background: var(--bg-1); border: 1px solid var(--border); border-radius: 0; box-shadow: inset 0 2px 0 var(--cyan); }
+.mc-eyebrow { color: var(--cyan); font: 9px/1 var(--mono); letter-spacing: 0.13em; }
+.mc-title { color: var(--text); font: 700 17px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.mc-ws-pill { background: transparent; border: 1px solid var(--border-2); border-radius: 0; color: var(--text-2); font-family: var(--mono); }
+.mc-body { gap: 12px; }
+.mc-feed-wrapper, .dual-pane { background: #090b0d; border: 1px solid var(--border); border-radius: 0; }
+.mc-view-toggle { position: absolute; top: 12px; left: 12px; z-index: 10; display: flex; gap: 0; border: 1px solid var(--border-2); background: rgba(8,10,12,0.92); }
+.mc-view-btn { min-height: 28px; padding: 0 10px; border: 0; border-right: 1px solid var(--border-2); background: transparent; color: var(--text-3); font: 9px/1 var(--mono); letter-spacing: 0.08em; white-space: nowrap; }
+.mc-view-btn:last-child { border-right: 0; }
+.mc-view-btn:hover, .mc-view-btn--active { background: var(--cyan-glow); color: var(--amber-bright); }
+.mc-state-overlay .state-indicator, .viewport-state-overlay { background: rgba(13,16,19,0.92); border: 1px solid var(--border-2); border-radius: 0; }
+.mc-step, .mc-metric { background: var(--bg-2); border: 1px solid var(--border); border-radius: 0; }
+.mc-step { padding: 8px 10px; }
+.mc-config-panel { background: var(--bg-1); border: 1px solid var(--border); border-radius: 0; }
+.mc-cfg-chip, .mc-cfg-input { background: var(--bg); border: 1px solid var(--border-2); border-radius: 0; color: var(--text); font-family: var(--mono); }
+.mc-cfg-chip--on { background: var(--cyan-glow); border-color: var(--cyan); color: var(--amber-bright); }
+.mc-cfg-slider, .setting-slider, .cam-slider, .pid-slider, .dist-param-slider,
+.setting-number-input, .setting-select, .setting-text-input { accent-color: var(--cyan); }
+.setting-number-input, .setting-select, .setting-text-input, .cop-input, .mc-cfg-input {
+  background: var(--bg) !important; border: 1px solid var(--border-2) !important;
+  color: var(--text) !important; border-radius: 0 !important;
+}
+.setting-number-input:focus, .setting-select:focus, .setting-text-input:focus, .cop-input:focus, .mc-cfg-input:focus { border-color: var(--cyan) !important; }
+.tracking-viewport { min-height: calc(100vh - 36px); }
+.viewport-toggle { background: rgba(8,10,12,0.94); border: 1px solid var(--border-2); border-radius: 0; }
+.viewport-strip { background: var(--bg-1); border-top: 1px solid var(--border); }
+.state-dot, .sidenav-status-dot, .ws-dot, .mc-ws-dot { border-radius: 0 !important; }
+.state-dot--pulse { animation-duration: 1.6s; }
+
+/* ── Detection / camera / charts / lab / reports / copilot ─ */
+.detection-body, .camera-body { gap: 12px; padding: 18px 26px 28px; }
+.pipeline-block, .chart-block, .pid-block, .pid-output-block { padding: 16px; }
+.pipe-stage--active { color: var(--amber-bright); }
+.pipe-stage--active .pipe-dot { background: var(--cyan); }
+.pipe-stage--done .pipe-dot { background: var(--green); }
+.cam-dpad-btn { background: var(--bg-2); border: 1px solid var(--border-2); color: var(--text-2); border-radius: 0; }
+.cam-dpad-btn:hover, .cam-dpad-center:hover { background: var(--cyan-glow); border-color: var(--cyan); color: var(--amber-bright); }
+.analytics-summary-row, .analytics-charts-grid, .settings-body, .reports-body, .disturbances-body, .copilot-body { padding: 18px 26px 28px; }
+.analytics-charts-grid { gap: 12px; background: transparent; }
+.analytics-chart-card { padding: 0 12px 12px; }
+.disturbance-index-row { background: var(--bg-1); border-bottom: 1px solid var(--border); }
+.dist-block--active { border-color: var(--cyan-dim) !important; box-shadow: inset 2px 0 0 var(--cyan) !important; }
+.toggle-btn { background: var(--bg-3); border: 1px solid var(--border-2); border-radius: 0; }
+.toggle-btn--on { background: var(--cyan); border-color: var(--cyan); }
+.reports-list-header { background: var(--bg-2); border-bottom: 1px solid var(--border); }
+.rl-row { border-bottom: 1px solid var(--border); color: var(--text-2); }
+.rl-row:hover, .rl-row--selected { background: var(--cyan-glow); color: var(--text); }
+.state-pill { border-radius: 0; border: 1px solid var(--border-2); font-family: var(--mono); }
+.rd-export-btn { background: transparent; border: 1px solid var(--border-2); border-radius: 0; color: var(--amber-bright); font-family: var(--mono); }
+.rd-export-btn:hover { background: var(--cyan-glow); border-color: var(--cyan); }
+.cop-quick-btn { background: transparent; border: 1px solid var(--border); border-radius: 0; color: var(--text-2); font-family: var(--mono); }
+.cop-quick-btn:hover { background: var(--cyan-glow); border-color: var(--cyan); color: var(--amber-bright); }
+.cop-welcome-title, .cop-msg-user .cop-msg-role { color: var(--amber-bright); }
+.cop-msg-user .cop-msg-content { background: var(--bg-2); border-left: 2px solid var(--cyan); }
+.cop-msg-assistant .cop-msg-content { background: var(--bg-1); border-left: 2px solid var(--border-2); }
+.cop-input-row { background: var(--bg-1); border-top: 1px solid var(--border); }
+.cop-send-btn { background: var(--cyan); color: var(--bg); border-radius: 0; }
+
+/* Recharts follows terminal palette */
+.recharts-cartesian-grid-horizontal line, .recharts-cartesian-grid-vertical line { stroke: rgba(98,106,109,0.27) !important; }
+.recharts-text { fill: var(--text-3) !important; font-family: var(--mono) !important; }
+.recharts-tooltip-wrapper { font-family: var(--mono); }
+
+/* ── Reusable terminal primitives (TerminalUI.tsx) ────────── */
+.tpanel { background: var(--bg-1); border: 1px solid var(--border); }
+.tpanel-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  font: 9px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan);
+}
+.tpanel-head .tpanel-idx { color: var(--text-3); }
+.tpanel-body { padding: 14px; }
+.tbtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 34px; padding: 8px 18px;
+  border: 1px solid var(--border-2); background: transparent;
+  color: var(--text-2); font: 10px/1 var(--mono);
+  letter-spacing: 0.09em; text-transform: uppercase; cursor: pointer;
+}
+.tbtn:hover { border-color: var(--cyan); color: var(--amber-bright); background: var(--cyan-glow); }
+.tbtn--primary { background: var(--cyan); border-color: var(--cyan); color: var(--bg); font-weight: 700; }
+.tbtn--primary:hover { background: var(--amber-bright); border-color: var(--amber-bright); color: var(--bg); }
+.tlabel { font: 9px/1 var(--mono); letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-3); }
+.tvalue { font: 12px/1.4 var(--mono); color: var(--text); }
+.tdiv { height: 1px; background: var(--border); }
+.tinput {
+  background: var(--bg); border: 1px solid var(--border-2);
+  color: var(--text); font: 11px/1 var(--mono); padding: 8px 10px; width: 100%;
+}
+.tinput:focus { border-color: var(--cyan); outline: none; }
+.tstatus { display: inline-flex; align-items: center; gap: 8px; font: 9px/1 var(--mono); letter-spacing: 0.1em; color: var(--text-2); }
+.tstatus i { width: 6px; height: 6px; background: var(--text-3); display: inline-block; }
+.tstatus--live i { background: var(--green); animation: term-blink 1.6s steps(1, end) infinite; }
+
+/* ── Responsive mission terminal ─────────────────────────── */
+@media (max-width: 900px) {
+  :root { --sidenav-w: 70px; }
+  .sidenav-logo { justify-content: center; padding-inline: 8px; }
+  .sidenav-logo-text, .sidenav-status-label, .sidenav-label, .sidenav-badge, .sidenav-user-info { display: none; }
+  .sidenav-status-row { justify-content: center; padding-inline: 8px; }
+  .sidenav-status-dot.ml-auto { margin-left: 6px; }
+  .sidenav-item { justify-content: center; padding: 12px 8px; }
+  .sidenav-index { display: none; }
+  .sidenav-user { justify-content: center; padding-inline: 8px; }
+  .page-header { padding-inline: 18px; }
+  .page-header::before { right: 18px; }
+  .mc-root { padding: 10px; }
+  .mc-topbar { flex-wrap: wrap; gap: 10px; }
+  .mc-topbar-center { order: 3; flex-basis: 100%; width: 100%; justify-content: flex-start; overflow-x: auto; padding-top: 8px; border-top: 1px solid var(--border); }
+  .mc-body { display: block; overflow: visible; }
+  .mc-feed-col { min-height: 0; border-right: 0; border-bottom: 1px solid var(--border); }
+  .mc-stats-col { width: auto; min-height: 420px; }
+}
+
+@media (max-width: 640px) {
+  .page-header { min-height: 72px; padding: 18px 14px 13px; }
+  .page-header::before { display: none; }
+  .page-title { font-size: 15px; }
+  .page-subtitle { font-size: 8px; }
+  .detection-body, .camera-body, .reports-body, .disturbances-body, .copilot-body { display: block; overflow: auto; }
+  .detection-info-col, .camera-pid-col { width: auto; }
+  .setting-row { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .setting-label { width: auto; }
+  .setting-input-group { width: 100%; }
+  .analytics-summary-row, .analytics-charts-grid, .settings-body, .reports-body, .disturbances-body, .copilot-body, .camera-body, .detection-body { padding: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .term-cursor { animation: none; }
+  .state-dot--pulse { animation: none; }
+}

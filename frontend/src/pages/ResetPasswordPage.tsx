@@ -180,7 +180,7 @@ export const ResetPasswordPage = () => {
 
       {/* Background — reuse Taj Mahal from LoginPage */}
       <div className="login-bg" aria-hidden="true">
-        <img src="/taj-mahal-hd.jpg" alt="" className="login-bg-img" />
+        <img src="/hero-space.jpg" alt="" className="login-bg-img" />
         <div className="login-bg-scrim" />
         <div className="login-bg-glow" />
       </div>
@@ -391,32 +391,32 @@ export const ResetPasswordPage = () => {
 
         {/* ── RIGHT: branding copy ── */}
         <div className="login-right">
-          <Link to="/" className="login-brand-row" aria-label="MICHIRA home">
+          <Link to="/" className="login-brand-row" aria-label="FSOC Track home">
             <BrandLogo />
-            <span className="login-brand-name">MICHIRA</span>
+            <span className="login-brand-name">FSOC·TRACK</span>
           </Link>
 
           <div className="login-right-eyebrow">
             <span className="ey-line" />
-            India · Heritage · Discovery
+            FSOC · Mission Software
           </div>
 
           <h2 className="login-right-headline">
-            A new key<br />
-            to your<br />
-            <em>journey.</em>
+            Restore your<br />
+            system<br />
+            <em>access.</em>
           </h2>
 
           <p className="login-right-sub">
-            Set a strong new password and pick up exactly where you left off —
-            every destination, every itinerary, every insight, still waiting.
+            Set a new operator credential and return to the virtual optical
+            tracking workstation.
           </p>
 
           <div className="login-quote">
             <p className="login-quote-text">
               "Every ending is a new beginning — even for passwords."
             </p>
-            <p className="login-quote-attr">MICHIRA · Travel Intelligence</p>
+            <p className="login-quote-attr">FSOC·TRACK · Mission Software</p>
           </div>
 
           <div className="login-temple-strip" aria-hidden="true">

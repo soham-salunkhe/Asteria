@@ -6,15 +6,15 @@ import React from 'react';
 import type { TargetState } from '../../types/fsoc';
 
 const STATE_CONFIG: Record<TargetState, { label: string; color: string; pulse: boolean }> = {
-  READY:       { label: 'READY',          color: '#6b7f80', pulse: false },
-  SEARCHING:   { label: 'SEARCHING…',     color: '#e0a040', pulse: true  },
-  DETECTED:    { label: 'DETECTED',       color: '#5fb3c0', pulse: false },
-  ACQUIRING:   { label: 'ACQUIRING…',     color: '#5fb3c0', pulse: true  },
-  TRACKING:    { label: 'TRACKING',       color: '#4caf82', pulse: false },
-  LOCKED:      { label: 'TARGET LOCKED',  color: '#4caf82', pulse: false },
-  LOST:        { label: 'TARGET LOST',    color: '#c05050', pulse: true  },
-  REACQUIRING: { label: 'REACQUIRING…',   color: '#e0a040', pulse: true  },
-  ERROR:       { label: 'ERROR',          color: '#c05050', pulse: false },
+  READY:       { label: 'READY',          color: '#626a6d', pulse: false },
+  SEARCHING:   { label: 'SEARCHING…',     color: '#e39a32', pulse: true  },
+  DETECTED:    { label: 'DETECTED',       color: '#f0b35a', pulse: false },
+  ACQUIRING:   { label: 'ACQUIRING…',     color: '#f0b35a', pulse: true  },
+  TRACKING:    { label: 'TRACKING',       color: '#8fa98f', pulse: false },
+  LOCKED:      { label: 'TARGET LOCKED',  color: '#8fa98f', pulse: false },
+  LOST:        { label: 'TARGET LOST',    color: '#a86a5a', pulse: true  },
+  REACQUIRING: { label: 'REACQUIRING…',   color: '#e39a32', pulse: true  },
+  ERROR:       { label: 'ERROR',          color: '#a86a5a', pulse: false },
 };
 
 interface Props {

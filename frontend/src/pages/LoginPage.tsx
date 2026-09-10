@@ -258,7 +258,7 @@ export const LoginPage = () => {
       {/* ── Fixed background — Taj Mahal ── */}
       <div className="login-bg" aria-hidden="true">
         <img
-          src="/taj-mahal-hd.jpg"
+        src="/hero-space.jpg"
           alt=""
           className="login-bg-img"
         />
@@ -318,7 +318,7 @@ export const LoginPage = () => {
                     }}
                     aria-hidden="true"
                   />
-                  Returning to your journey…
+                  Returning to mission control…
                 </p>
               </div>
 
@@ -535,7 +535,7 @@ export const LoginPage = () => {
                   >
                     {loading
                       ? <><span className="su-spinner" aria-hidden="true" /> Signing you in…</>
-                      : 'Sign In ✦'}
+            : 'ACCESS SYSTEM →'}
                   </button>
 
                   {/* ── Social ── */}
@@ -604,7 +604,7 @@ export const LoginPage = () => {
 
           <div className="login-right-eyebrow">
             <span className="ey-line" />
-            India · Heritage · Discovery
+            FSOC · Mission Software
           </div>
 
           <h2 className="login-right-headline">

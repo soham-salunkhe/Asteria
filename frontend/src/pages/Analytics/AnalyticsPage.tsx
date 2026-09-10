@@ -54,11 +54,11 @@ export function AnalyticsPage() {
   const chartProps = {
     margin: { top: 4, right: 4, left: -24, bottom: 0 },
   };
-  const gridProps = { stroke: '#1a2a2a', strokeDasharray: '2 4' };
-  const axisProps = { stroke: '#4a5a5a', tick: { fill: '#6b7f80', fontSize: 10 } };
+  const gridProps = { stroke: '#242b30', strokeDasharray: '2 4' };
+  const axisProps = { stroke: '#3a464d', tick: { fill: '#626a6d', fontSize: 10, fontFamily: 'IBM Plex Mono, monospace' } };
   const ttProps = {
-    contentStyle: { background: '#0e1717', border: '1px solid #1e2c2c', fontSize: 11 },
-    labelStyle: { color: '#6b7f80' },
+    contentStyle: { background: '#0d1013', border: '1px solid #3a464d', fontSize: 11, color: '#e8e4dc', borderRadius: 0 },
+    labelStyle: { color: '#8d9195' },
   };
 
   return (
@@ -96,10 +96,10 @@ export function AnalyticsPage() {
               <XAxis dataKey="t" tick={false} />
               <YAxis {...axisProps} />
               <Tooltip {...ttProps} />
-              <Line type="monotone" dataKey="error"   stroke="#c05050" dot={false} strokeWidth={1.5} name="Total" />
-              <Line type="monotone" dataKey="panErr"  stroke="#3ecfcf" dot={false} strokeWidth={1}   name="Pan" />
-              <Line type="monotone" dataKey="tiltErr" stroke="#e0a040" dot={false} strokeWidth={1}   name="Tilt" />
-              <ReferenceLine y={0.5} stroke="#4caf8240" strokeDasharray="4 4" />
+              <Line type="monotone" dataKey="error"   stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Total" />
+              <Line type="monotone" dataKey="panErr"  stroke="#d98618" dot={false} strokeWidth={1}   name="Pan" />
+              <Line type="monotone" dataKey="tiltErr" stroke="#8d9195" dot={false} strokeWidth={1}   name="Tilt" />
+              <ReferenceLine y={0.5} stroke="#8fa98f55" strokeDasharray="4 4" />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -111,8 +111,8 @@ export function AnalyticsPage() {
               <XAxis dataKey="t" tick={false} />
               <YAxis {...axisProps} />
               <Tooltip {...ttProps} />
-              <Line type="monotone" dataKey="fps"  stroke="#4caf82" dot={false} strokeWidth={1.5} name="FPS" />
-              <Line type="monotone" dataKey="proc" stroke="#e0a040" dot={false} strokeWidth={1}   name="Proc (ms)" />
+              <Line type="monotone" dataKey="fps"  stroke="#8fa98f" dot={false} strokeWidth={1.5} name="FPS" />
+              <Line type="monotone" dataKey="proc" stroke="#e39a32" dot={false} strokeWidth={1}   name="Proc (ms)" />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -125,9 +125,9 @@ export function AnalyticsPage() {
               <YAxis {...axisProps} domain={[0, 100]} />
               <Tooltip {...ttProps} />
               <Area
-                type="monotone" dataKey="conf" stroke="#3ecfcf"
-                fill="#3ecfcf20" strokeWidth={1.5} name="Confidence %" />
-              <ReferenceLine y={90} stroke="#4caf8240" strokeDasharray="4 4" />
+                type="monotone" dataKey="conf" stroke="#d98618"
+                fill="#d9861822" strokeWidth={1.5} name="Confidence %" />
+              <ReferenceLine y={90} stroke="#8fa98f55" strokeDasharray="4 4" />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -140,8 +140,8 @@ export function AnalyticsPage() {
               <YAxis {...axisProps} domain={[0, 1.2]} ticks={[0, 1]} />
               <Tooltip {...ttProps} />
               <Area
-                type="stepAfter" dataKey="locked" stroke="#4caf82"
-                fill="#4caf8220" strokeWidth={1.5} name="Locked" />
+                type="stepAfter" dataKey="locked" stroke="#8fa98f"
+                fill="#8fa98f22" strokeWidth={1.5} name="Locked" />
             </AreaChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -154,20 +154,20 @@ export function AnalyticsPage() {
               <YAxis type="number" dataKey="tilt" {...axisProps} name="Tilt (°)" />
               <Tooltip
                 {...ttProps}
-                cursor={{ stroke: '#3ecfcf40' }}
+                cursor={{ stroke: '#d9861855' }}
                 content={({ payload }) => {
                   if (!payload?.length) return null;
                   const d = payload[0].payload;
                   return (
-                    <div style={{ background: '#0e1717', border: '1px solid #1e2c2c', padding: '4px 8px', fontSize: 11, color: '#8a9ba0' }}>
+                    <div style={{ background: '#0d1013', border: '1px solid #3a464d', padding: '4px 8px', fontSize: 11, color: '#8d9195' }}>
                       Pan: {d.pan?.toFixed(3)}° | Tilt: {d.tilt?.toFixed(3)}°
                     </div>
                   );
                 }}
               />
-              <Scatter data={scatterData} fill="#3ecfcf" opacity={0.5} />
-              <ReferenceLine x={0} stroke="#4a5a5a40" />
-              <ReferenceLine y={0} stroke="#4a5a5a40" />
+              <Scatter data={scatterData} fill="#d98618" opacity={0.55} />
+              <ReferenceLine x={0} stroke="#3a464d55" />
+              <ReferenceLine y={0} stroke="#3a464d55" />
             </ScatterChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -191,10 +191,10 @@ export function AnalyticsPage() {
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={histData} {...chartProps}>
                   <CartesianGrid {...gridProps} />
-                  <XAxis dataKey="bin" tick={{ fill: '#6b7f80', fontSize: 9 }} />
+                  <XAxis dataKey="bin" tick={{ fill: '#626a6d', fontSize: 9 }} />
                   <YAxis {...axisProps} />
                   <Tooltip {...ttProps} />
-                  <Area type="monotone" dataKey="count" stroke="#5fb3c0" fill="#5fb3c020" strokeWidth={1.5} name="Count" />
+                  <Area type="monotone" dataKey="count" stroke="#d98618" fill="#d9861822" strokeWidth={1.5} name="Count" />
                 </AreaChart>
               </ResponsiveContainer>
             );

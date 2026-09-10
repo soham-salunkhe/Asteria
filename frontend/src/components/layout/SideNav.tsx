@@ -5,19 +5,20 @@ import type { WsStatus } from '../../hooks/useSimulation';
 
 interface NavItem {
   path: string;
+  index?: string;
   label: string;
   icon: React.ReactNode;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { path: '/mission', label: 'Mission Control', icon: <IconMission /> },
-  { path: '/tracking', label: 'Live Tracking', icon: <IconTracking /> },
-  { path: '/detection', label: 'Detection', icon: <IconDetection /> },
-  { path: '/camera', label: 'Camera Control', icon: <IconCamera /> },
-  { path: '/disturbances', label: 'Disturbance Lab', icon: <IconDisturbance /> },
-  { path: '/analytics', label: 'Analytics', icon: <IconAnalytics /> },
-  { path: '/reports', label: 'Reports', icon: <IconReports /> },
-  { path: '/settings', label: 'Settings', icon: <IconSettings /> },
+  { path: '/mission', index: '01', label: 'ENVIRONMENT', icon: <IconMission /> },
+  { path: '/camera', index: '02', label: 'CAMERA', icon: <IconCamera /> },
+  { path: '/detection', index: '03', label: 'DETECTION', icon: <IconDetection /> },
+  { path: '/tracking', index: '04', label: 'TRACKING', icon: <IconTracking /> },
+  { path: '/analytics', index: '05', label: 'ANALYTICS', icon: <IconAnalytics /> },
+  { path: '/disturbances', label: 'DISTURBANCE LAB', icon: <IconDisturbance /> },
+  { path: '/reports', label: 'REPORTS', icon: <IconReports /> },
+  { path: '/settings', label: 'SETTINGS', icon: <IconSettings /> },
 ];
 
 interface Props {
@@ -29,11 +30,11 @@ export function SideNav({ wsStatus, simStatus }: Props) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
-  const wsColor = wsStatus === 'connected' ? '#4caf82' :
-                  wsStatus === 'error'     ? '#c05050' : '#6b7f80';
+  const wsColor = wsStatus === 'connected' ? '#8fa98f' :
+                  wsStatus === 'error'     ? '#a86a5a' : '#626a6d';
 
-  const simColor = simStatus === 'running' ? '#4caf82' :
-                   simStatus === 'paused'  ? '#e0a040' : '#6b7f80';
+  const simColor = simStatus === 'running' ? '#8fa98f' :
+                   simStatus === 'paused'  ? '#d98618' : '#626a6d';
 
   return (
     <nav className="sidenav">
@@ -69,6 +70,7 @@ export function SideNav({ wsStatus, simStatus }: Props) {
                 `sidenav-item${isActive ? ' sidenav-item--active' : ''}`
               }
             >
+              <span className="sidenav-index">{item.index ?? '··'}</span>
               <span className="sidenav-icon">{item.icon}</span>
               <span className="sidenav-label">{item.label}</span>
             </NavLink>
@@ -120,14 +122,14 @@ export function SideNav({ wsStatus, simStatus }: Props) {
 // ── Icon components ───────────────────────────────────────────
 function LogoMark() {
   return (
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-      <circle cx="16" cy="16" r="14" stroke="#3ecfcf" strokeWidth="1.5" />
-      <circle cx="16" cy="16" r="8" stroke="#3ecfcf" strokeWidth="1" opacity="0.5" />
-      <circle cx="16" cy="16" r="3" fill="#3ecfcf" />
-      <line x1="16" y1="2" x2="16" y2="6" stroke="#3ecfcf" strokeWidth="1.5" />
-      <line x1="16" y1="26" x2="16" y2="30" stroke="#3ecfcf" strokeWidth="1.5" />
-      <line x1="2" y1="16" x2="6" y2="16" stroke="#3ecfcf" strokeWidth="1.5" />
-      <line x1="26" y1="16" x2="30" y2="16" stroke="#3ecfcf" strokeWidth="1.5" />
+    <svg width="28" height="28" viewBox="0 0 32 32" fill="none" color="#d98618">
+      <circle cx="16" cy="16" r="14" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="16" cy="16" r="8" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+      <circle cx="16" cy="16" r="3" fill="currentColor" />
+      <line x1="16" y1="2" x2="16" y2="6" stroke="currentColor" strokeWidth="1.5" />
+      <line x1="16" y1="26" x2="16" y2="30" stroke="currentColor" strokeWidth="1.5" />
+      <line x1="2" y1="16" x2="6" y2="16" stroke="currentColor" strokeWidth="1.5" />
+      <line x1="26" y1="16" x2="30" y2="16" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }

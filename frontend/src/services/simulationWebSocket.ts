@@ -16,15 +16,17 @@ class SimulationWebSocket {
   private _onFrame: FrameCallback | null = null;
   private _onStatus: StatusCallback | null = null;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private _reconnectDelay = 2000;
+  private _reconnectDelay = 3000; // Increased from 2s to 3s
   private _shouldReconnect = true;
   private _connected = false;
+  private _isReconnecting = false;
 
   connect(onFrame: FrameCallback, onStatus?: StatusCallback): void {
     this._onFrame = onFrame;
     this._onStatus = onStatus ?? null;
     this._shouldReconnect = true;
-    this._open();
+    // Small delay to ensure page is fully loaded
+    setTimeout(() => this._open(), 500);
   }
 
   disconnect(): void {
@@ -45,12 +47,17 @@ class SimulationWebSocket {
   }
 
   private _open(): void {
+    // Prevent multiple simultaneous connection attempts
+    if (this._isReconnecting) return;
+    this._isReconnecting = true;
+
     try {
       this._ws = new WebSocket(FSOC_WS);
 
       this._ws.onopen = () => {
         this._connected = true;
-        this._reconnectDelay = 2000;
+        this._reconnectDelay = 3000;
+        this._isReconnecting = false;
         this._onStatus?.('connected');
       };
 
@@ -67,23 +74,30 @@ class SimulationWebSocket {
       };
 
       this._ws.onerror = () => {
+        this._isReconnecting = false;
         this._onStatus?.('error');
       };
 
       this._ws.onclose = () => {
         this._connected = false;
+        this._isReconnecting = false;
         this._onStatus?.('disconnected');
-        if (this._shouldReconnect) {
+        if (this._shouldReconnect && !this._reconnectTimer) {
           this._reconnectTimer = setTimeout(() => {
-            this._reconnectDelay = Math.min(this._reconnectDelay * 1.5, 15000);
+            this._reconnectTimer = null;
+            this._reconnectDelay = Math.min(this._reconnectDelay * 1.5, 30000);
             this._open();
           }, this._reconnectDelay);
         }
       };
     } catch {
+      this._isReconnecting = false;
       this._onStatus?.('error');
-      if (this._shouldReconnect) {
-        this._reconnectTimer = setTimeout(() => this._open(), this._reconnectDelay);
+      if (this._shouldReconnect && !this._reconnectTimer) {
+        this._reconnectTimer = setTimeout(() => {
+          this._reconnectTimer = null;
+          this._open();
+        }, this._reconnectDelay);
       }
     }
   }

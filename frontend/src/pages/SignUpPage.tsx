@@ -331,7 +331,7 @@ export const SignUpPage = () => {
       {/* ── Fixed background ── */}
       <div className="signup-bg" aria-hidden="true">
         <img
-          src="/img/virupaksha.jpg"
+          src="/hero-space.jpg"
           alt=""
           className="signup-bg-img"
         />
@@ -347,33 +347,33 @@ export const SignUpPage = () => {
             ════════════════════════════════════════ */}
         <div className="signup-left">
 
-          <Link to="/" className="signup-brand-row" aria-label="MICHIRA home">
+          <Link to="/" className="signup-brand-row" aria-label="FSOC Track home">
             <BrandLogo />
-            <span className="signup-brand-name">MICHIRA</span>
+            <span className="signup-brand-name">FSOC·TRACK</span>
           </Link>
 
           <div className="signup-left-eyebrow">
             <span className="ey-line" />
-            India · Heritage · Discovery
+            FSOC · Mission Software
           </div>
 
           <h1 className="signup-left-headline">
-            Your journey<br />
-            through India<br />
-            <em>begins here.</em>
+            Your mission<br />
+            starts with<br />
+            <em>precision.</em>
           </h1>
 
           <p className="signup-left-sub">
-            Discover sacred places, hidden gems, living traditions and
-            unforgettable journeys — guided by AI, shaped by travelers.
+            Simulate the full optical tracking pipeline — from beacon
+            detection through predictive control and mission analytics.
           </p>
 
           <div className="signup-features" role="list">
             {[
-              'AI-curated heritage itineraries',
-              'Real traveler sentiment intelligence',
-              'Crowd & timing predictions',
-              'Multilingual travel guidance',
+              'Virtual environment configuration',
+              'AI-assisted beacon detection',
+              'Kalman predictive tracking',
+              'Live performance telemetry',
             ].map(f => (
               <div className="signup-feature-item" role="listitem" key={f}>
                 <span className="signup-feature-dot" aria-hidden="true" />
@@ -419,11 +419,11 @@ export const SignUpPage = () => {
                   <span className="su-ornament-line right" />
                 </div>
 
-                <p className="signup-card-eyebrow">Welcome to MICHIRA</p>
+                <p className="signup-card-eyebrow">SYSTEM ACCESS GRANTED</p>
                 <h2 className="su-success-title">Your account is ready.</h2>
                 <p className="su-success-sub">
-                  Your journey through India begins now.<br />
-                  Exploring sacred places, hidden gems and living traditions.
+                  Your mission workspace is ready.<br />
+                  Configure, simulate and track with confidence.
                 </p>
                 <p className="su-success-redirect" aria-live="polite">
                   <span
@@ -438,15 +438,15 @@ export const SignUpPage = () => {
                     }}
                     aria-hidden="true"
                   />
-                  Redirecting to your journey…
+                  Redirecting to mission control…
                 </p>
               </div>
             ) : (
               /* ── SIGN UP FORM ───────────────────────── */
               <>
-                <p className="signup-card-eyebrow">Begin your journey</p>
-                <h2 className="signup-card-title">Create your account</h2>
-                <p className="signup-card-sub">Join MICHIRA — India's heritage, intelligently explored.</p>
+                <p className="signup-card-eyebrow">IDENTITY REGISTRATION</p>
+                <h2 className="signup-card-title">Create operator access</h2>
+                <p className="signup-card-sub">Register an operator profile for the FSOC tracking workstation.</p>
 
                 <div className="su-ornament" aria-hidden="true">
                   <span className="su-ornament-line" />

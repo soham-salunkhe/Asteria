@@ -6,10 +6,10 @@ import React, { useRef, useEffect } from 'react';
 import type { EventLogEntry } from '../../types/fsoc';
 
 const LEVEL_COLOR: Record<string, string> = {
-  info:    '#5fb3c0',
-  success: '#4caf82',
-  warning: '#e0a040',
-  error:   '#c05050',
+  info:    '#8d9195',
+  success: '#8fa98f',
+  warning: '#e39a32',
+  error:   '#a86a5a',
 };
 
 interface Props {
