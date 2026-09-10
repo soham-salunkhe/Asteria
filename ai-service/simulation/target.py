@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Literal
 
-TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk', 'figure_8', 'spiral']
+TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk', 'figure_8', 'spiral', 'static']
 
 
 @dataclass
@@ -141,6 +141,11 @@ class Target:
             self._position.y += self._rw_vy * dt
             self._velocity.x = self._rw_vx
             self._velocity.y = self._rw_vy
+        elif cfg.trajectory == 'static':
+            self._position.x = self._origin.x
+            self._position.y = self._origin.y
+            self._velocity.x = 0.0
+            self._velocity.y = 0.0
 
     def _noise(self) -> float:
         return random.gauss(0, 0.1)

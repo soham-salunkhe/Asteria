@@ -2,64 +2,47 @@
  * FSOC — Disturbance Lab
  * Configures and activates disturbances in real time.
  */
-import React, { useState, useEffect } from 'react';
-import { useSimulation } from '../../hooks/useSimulation';
+import React from 'react';
+import { useSimulation, DEFAULT_DISTURBANCES } from '../../hooks/useSimulation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
 } from 'recharts';
-import type { TelemetryFrame } from '../../types/fsoc';
+import type { TelemetryFrame, DisturbanceConfig } from '../../types/fsoc';
 
 const CHART_WINDOW = 200;
 
-interface DisturbanceState {
-  atmospheric_turbulence: { enabled: boolean; strength: number; frequency: number };
-  platform_vibration:     { enabled: boolean; amplitude: number; frequency: number };
-  camera_motion:          { enabled: boolean; angular_disturbance: number };
-  sensor_noise:           { enabled: boolean; noise_level: number; noise_type: string };
-  target_motion_variation:{ enabled: boolean; velocity_variation: number };
-}
-
-const DEFAULT_DIST: DisturbanceState = {
-  atmospheric_turbulence:  { enabled: false, strength: 0.3,  frequency: 2.0 },
-  platform_vibration:      { enabled: false, amplitude: 0.5, frequency: 10.0 },
-  camera_motion:           { enabled: false, angular_disturbance: 0.1 },
-  sensor_noise:            { enabled: false, noise_level: 0.05, noise_type: 'gaussian' },
-  target_motion_variation: { enabled: false, velocity_variation: 0.3 },
-};
+type DisturbanceKey = keyof DisturbanceConfig;
 
 export function DisturbancesPage() {
   const sim = useSimulation();
   const f   = sim.latest;
-  const [dist, setDist] = useState<DisturbanceState>(DEFAULT_DIST);
+  // Controlled representation of the authoritative simulation state.
+  // No local copy: this reads sim.disturbances (app-root store, survives
+  // navigation) and writes through sim.updateDisturbanceConfig.
+  const dist = sim.disturbances;
 
   const totalIndex = f?.disturbance?.total_disturbance_index ?? 0;
   const activeCount = f?.disturbance?.active_count ?? 0;
 
-  const applyDisturbances = async (updated: DisturbanceState) => {
-    await sim.updateDisturbances(updated);
-  };
-
-  const toggle = async (key: keyof DisturbanceState) => {
-    const updated = {
+  const toggle = (key: DisturbanceKey) => {
+    const section = dist[key] as Record<string, unknown>;
+    void sim.updateDisturbanceConfig({
       ...dist,
-      [key]: { ...dist[key], enabled: !dist[key].enabled },
-    };
-    setDist(updated);
-    await applyDisturbances(updated);
+      [key]: { ...section, enabled: !section.enabled },
+    });
   };
 
-  const setParam = async (
-    key: keyof DisturbanceState,
+  const setParam = (
+    key: DisturbanceKey,
     param: string,
     value: number | string,
   ) => {
-    const updated = {
+    const section = dist[key] as Record<string, unknown>;
+    void sim.updateDisturbanceConfig({
       ...dist,
-      [key]: { ...dist[key], [param]: value },
-    };
-    setDist(updated);
-    await applyDisturbances(updated);
+      [key]: { ...section, [param]: value },
+    });
   };
 
   // Chart
@@ -195,9 +178,8 @@ export function DisturbancesPage() {
           {/* Reset all */}
           <button
             className="btn-ghost dist-reset-btn"
-            onClick={async () => {
-              setDist(DEFAULT_DIST);
-              await applyDisturbances(DEFAULT_DIST);
+            onClick={() => {
+              void sim.updateDisturbanceConfig(DEFAULT_DISTURBANCES);
             }}
           >
             DISABLE ALL DISTURBANCES

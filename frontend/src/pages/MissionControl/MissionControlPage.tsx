@@ -68,7 +68,7 @@ export function MissionControlPage() {
   const nav = useNavigate();
 
   const [starting, setStarting]     = useState(false);
-  const [viewMode, setViewMode]   = useState<'camera' | '3d'>('camera');
+  const [viewMode, setViewMode]   = useState<'camera' | '3d'>('3d');
   const [showConfig, setShowConfig] = useState(false);
   const [environment, setEnvironment] = useState<string>('urban');
   const [atmosMode, setAtmosMode]   = useState<AtmosMode>('clear');
@@ -81,6 +81,12 @@ export function MissionControlPage() {
 
   const f   = sim.latest;
   const met = f?.metrics;
+
+  // Same authoritative disturbance state as the Disturbance Lab.
+  // ON if the shared store says so or a live telemetry echo confirms it.
+  const turbActive = sim.disturbances.atmospheric_turbulence.enabled
+    || (f?.disturbance?.config?.atmospheric_turbulence?.enabled ?? false);
+  const activeDistCount = f?.disturbance?.active_count ?? 0;
 
   const isRunning = sim.simStatus === 'running';
   const isPaused  = sim.simStatus === 'paused';
@@ -120,7 +126,6 @@ export function MissionControlPage() {
     setStarting(true);
     try {
       await sim.startDemo();
-      setTimeout(() => nav('/tracking'), 600);
     } finally {
       setStarting(false);
     }
@@ -130,7 +135,6 @@ export function MissionControlPage() {
     setStarting(true);
     try {
       await sim.startCustom(buildConfig());
-      setTimeout(() => nav('/tracking'), 600);
     } finally {
       setStarting(false);
     }
@@ -168,7 +172,7 @@ export function MissionControlPage() {
       {/* ── Top bar ─────────────────────────────────────────── */}
       <div className="mc-topbar">
         <div className="mc-topbar-left">
-          <span className="mc-eyebrow">FSOC VIRTUAL PAT</span>
+          <span className="mc-eyebrow">ASTERIA · FSOC COARSE ALIGNMENT · PS169</span>
           <span className="mc-title">Mission Control</span>
         </div>
 
@@ -236,6 +240,16 @@ export function MissionControlPage() {
         </div>
 
         <div className="mc-topbar-right">
+          {turbActive && (
+            <div
+              className="mc-ws-pill"
+              data-status="warning"
+              title={`Atmospheric turbulence active — ${activeDistCount} disturbance(s) live`}
+            >
+              <span className="mc-ws-dot" />
+              ATMOSPHERIC TURBULENCE ACTIVE
+            </div>
+          )}
           <div className="mc-ws-pill" data-status={sim.wsStatus}>
             <span className="mc-ws-dot" />
             {sim.wsStatus === 'connected' ? 'TELEMETRY LIVE'
@@ -433,7 +447,7 @@ export function MissionControlPage() {
 
         {/* LEFT — camera feed / 3d view */}
         <div className="mc-feed-col">
-          <div className="mc-feed-wrapper">
+          <div className={`mc-feed-wrapper${viewMode === '3d' ? ' mc-feed-wrapper--3d' : ''}`}>
             <div className="mc-view-toggle" role="tablist" aria-label="Mission visualisation">
               <button
                 type="button"

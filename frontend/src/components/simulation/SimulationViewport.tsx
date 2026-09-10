@@ -24,7 +24,19 @@ interface Props {
 
 export function SimulationViewport({ frame, history }: Props) {
   return (
-    <div style={{ width: '100%', height: '100%', background: '#101a29' }}>
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
+        minHeight: 0,
+        flex: 1,
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        background: '#101a29',
+      }}
+    >
       <Suspense
         fallback={
           <div className="sim3d-fallback">Loading 3-D engine…</div>

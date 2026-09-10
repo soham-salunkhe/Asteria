@@ -53,6 +53,15 @@ export const fsocApi = {
   setTargetOffset: (x: number, y: number, z: number) =>
     post('/api/simulation/target_offset', { x, y, z }),
 
+  // Target switching (coarse-alignment objective switch)
+  switchTarget: (data: {
+    target_id: string;
+    position?: { x: number; y: number; z: number };
+    velocity?: { x: number; y: number; z: number };
+    trajectory?: string;
+    beacon_offset?: { x: number; y: number; z: number };
+  }) => post<{ success: boolean; target_id: string }>('/api/simulation/switch_target', data),
+
   // Scenarios
   createScenario: (data: unknown) => post('/api/scenarios', data),
   listScenarios: () => get<{ data: unknown[] }>('/api/scenarios'),

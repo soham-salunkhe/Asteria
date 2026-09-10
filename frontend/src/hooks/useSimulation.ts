@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { TelemetryFrame, EventLogEntry } from '../types/fsoc';
+import type { TelemetryFrame, EventLogEntry, DisturbanceConfig } from '../types/fsoc';
 import { simulationWS } from '../services/simulationWebSocket';
 import { fsocApi } from '../services/fsocApi';
 
@@ -22,11 +22,70 @@ const MAX_EVENTS  = 100;
 
 export type WsStatus = 'connected' | 'disconnected' | 'error';
 
+// ── Authoritative frontend mirror of the backend disturbance config ──
+// Single source of truth for ALL pages (Disturbance Lab, Mission, …).
+// Lives in the app-root SimulationProvider, so it survives navigation.
+// The backend engine is the ultimate authority; telemetry frames echo its
+// config back and reconcile this mirror (covers refresh-while-running).
+export const DEFAULT_DISTURBANCES: DisturbanceConfig = {
+  atmospheric_turbulence:  { enabled: false, strength: 0.3,  frequency: 2.0 },
+  platform_vibration:      { enabled: false, amplitude: 0.5, frequency: 10.0 },
+  camera_motion:           { enabled: false, angular_disturbance: 0.1 },
+  sensor_noise:            { enabled: false, noise_level: 0.05, noise_type: 'gaussian' },
+  target_motion_variation: { enabled: false, velocity_variation: 0.3 },
+};
+
+function normalizeDisturbances(cfg: Partial<DisturbanceConfig> | null | undefined): DisturbanceConfig {
+  const d = DEFAULT_DISTURBANCES;
+  const pick = <T>(v: T | undefined, fb: T): T => (v === undefined || v === null ? fb : v);
+  return {
+    atmospheric_turbulence: {
+      enabled:   pick(cfg?.atmospheric_turbulence?.enabled, d.atmospheric_turbulence.enabled),
+      strength:  pick(cfg?.atmospheric_turbulence?.strength, d.atmospheric_turbulence.strength),
+      frequency: pick(cfg?.atmospheric_turbulence?.frequency, d.atmospheric_turbulence.frequency),
+    },
+    platform_vibration: {
+      enabled:   pick(cfg?.platform_vibration?.enabled, d.platform_vibration.enabled),
+      amplitude: pick(cfg?.platform_vibration?.amplitude, d.platform_vibration.amplitude),
+      frequency: pick(cfg?.platform_vibration?.frequency, d.platform_vibration.frequency),
+    },
+    camera_motion: {
+      enabled:             pick(cfg?.camera_motion?.enabled, d.camera_motion.enabled),
+      angular_disturbance: pick(cfg?.camera_motion?.angular_disturbance, d.camera_motion.angular_disturbance),
+    },
+    sensor_noise: {
+      enabled:     pick(cfg?.sensor_noise?.enabled, d.sensor_noise.enabled),
+      noise_level: pick(cfg?.sensor_noise?.noise_level, d.sensor_noise.noise_level),
+      noise_type:  pick(cfg?.sensor_noise?.noise_type, d.sensor_noise.noise_type),
+    },
+    target_motion_variation: {
+      enabled:            pick(cfg?.target_motion_variation?.enabled, d.target_motion_variation.enabled),
+      velocity_variation: pick(cfg?.target_motion_variation?.velocity_variation, d.target_motion_variation.velocity_variation),
+    },
+  };
+}
+
+function sameDisturbances(a: DisturbanceConfig, b: DisturbanceConfig): boolean {
+  const keys = [
+    'atmospheric_turbulence', 'platform_vibration', 'camera_motion',
+    'sensor_noise', 'target_motion_variation',
+  ] as const;
+  return keys.every(k => {
+    const x = a[k] as Record<string, unknown>;
+    const y = (b[k] ?? {}) as Record<string, unknown>;
+    return Object.keys(x).every(f => x[f] === y[f]);
+  });
+}
+
 function useSimulationState() {
   const [wsStatus, setWsStatus] = useState<WsStatus>('disconnected');
   const [latest, setLatest]     = useState<TelemetryFrame | null>(null);
   const [history, setHistory]   = useState<TelemetryFrame[]>([]);
   const [events, setEvents]     = useState<EventLogEntry[]>([]);
+  // Authoritative disturbance config — shared by every page, survives
+  // navigation because this hook lives in the app-root provider.
+  const [disturbances, setDisturbancesState] =
+    useState<DisturbanceConfig>(DEFAULT_DISTURBANCES);
 
   // Throttle history updates to avoid excess re-renders
   const historyBuffer = useRef<TelemetryFrame[]>([]);
@@ -37,6 +96,13 @@ function useSimulationState() {
     simulationWS.connect(
       (frame) => {
         setLatest(frame);
+        // Reconcile the authoritative disturbance mirror with the backend
+        // echo. No-op when identical (avoids extra renders at 30 fps).
+        const echoed = frame.disturbance?.config;
+        if (echoed) {
+          const norm = normalizeDisturbances(echoed);
+          setDisturbancesState(prev => (sameDisturbances(prev, norm) ? prev : norm));
+        }
         // Buffer history, flush every 250 ms
         historyBuffer.current.push(frame);
         // Collect events
@@ -79,6 +145,16 @@ function useSimulationState() {
   const pause = useCallback(() => fsocApi.pauseSimulation(), []);
   const reset = useCallback(() => fsocApi.resetSimulation(), []);
 
+  // Write-through update: mirror locally first (instant UI feedback,
+  // survives navigation), then push to the backend engine. The next
+  // telemetry frame echoes the applied config back for confirmation.
+  const updateDisturbanceConfig = useCallback(async (cfg: DisturbanceConfig) => {
+    const norm = normalizeDisturbances(cfg);
+    setDisturbancesState(norm);
+    await fsocApi.updateDisturbances(norm);
+  }, []);
+
+  // Legacy fire-and-forget sender (kept for compatibility).
   const updateDisturbances = useCallback((cfg: unknown) =>
     fsocApi.updateDisturbances(cfg), []);
 
@@ -91,11 +167,21 @@ function useSimulationState() {
   const setTargetOffset = useCallback((x: number, y: number, z: number) =>
     fsocApi.setTargetOffset(x, y, z), []);
 
+  const switchTarget = useCallback((data: {
+    target_id: string;
+    position?: { x: number; y: number; z: number };
+    velocity?: { x: number; y: number; z: number };
+    trajectory?: string;
+    beacon_offset?: { x: number; y: number; z: number };
+  }) => fsocApi.switchTarget(data), []);
+
   return {
     wsStatus,
     latest,
     history,
     events,
+    // authoritative disturbance state (single source of truth)
+    disturbances,
     // convenience aliases
     simStatus: latest?.sim_status ?? 'idle',
     targetState: latest?.target_state ?? 'READY',
@@ -105,10 +191,12 @@ function useSimulationState() {
     stop,
     pause,
     reset,
+    updateDisturbanceConfig,
     updateDisturbances,
     updatePID,
     updateCamera,
     setTargetOffset,
+    switchTarget,
   };
 }
 

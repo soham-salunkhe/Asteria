@@ -35,6 +35,10 @@ interface SceneObjectDef {
   id: string;
   kind: LocalKind;
   label: string;
+  displayLabel: string;
+  hostId: string;
+  beaconId: string;
+  trackingState: 'IDLE' | 'TRACKING' | 'LOCKED' | 'LOST';
   base: V3; // spawn anchor — motion is applied as an offset on top
   rotation: V3;
   motion: MotionMode;
@@ -558,9 +562,10 @@ function VirtualFsocRig({
   }, [fovH, fovV]);
 
   const linkColor = state === 'LOCKED' ? '#8fe0b4' : state === 'TRACKING' ? '#a9d3b8' : '#d9b06a';
-  const toTarget: V3 = [
+  // Point optical link directly to the tracked beacon at [0, 0.62, 0] offset on host platform
+  const toBeacon: V3 = [
     targetPosition[0] - SAT_A_POSITION[0],
-    targetPosition[1] - SAT_A_POSITION[1],
+    targetPosition[1] + 0.62 - SAT_A_POSITION[1],
     targetPosition[2] - SAT_A_POSITION[2],
   ];
 
@@ -600,10 +605,10 @@ function VirtualFsocRig({
         )}
       </group>
       {showLabels && <ObjLabel text="FSOC-CAM-01" color="#9fd8e8" offset={0.62} />}
-      {/* line of sight to the live target (thin, secondary to the beacon) */}
-      <Line points={[[0, 0.22, 0], toTarget]} color="#7fa895" lineWidth={0.5} transparent opacity={0.4} dashed dashSize={0.05} gapSize={0.05} />
+      {/* line of sight to the live beacon */}
+      <Line points={[[0, 0.22, 0], toBeacon]} color="#7fa895" lineWidth={0.5} transparent opacity={0.4} dashed dashSize={0.05} gapSize={0.05} />
       {linkActive && showFov && (
-        <Line points={[[0, 0.22, 0], toTarget]} color={linkColor} lineWidth={state === 'LOCKED' ? 1 : 0.6} transparent opacity={state === 'LOCKED' ? 0.8 : 0.45} />
+        <Line points={[[0, 0.22, 0], toBeacon]} color={linkColor} lineWidth={state === 'LOCKED' ? 1 : 0.6} transparent opacity={state === 'LOCKED' ? 0.8 : 0.45} />
       )}
     </group>
   );
@@ -737,7 +742,7 @@ function LocalObject({
 
 // ── Operator view presets + follow (never touches pan/tilt) ─────
 interface ViewRequest {
-  name: 'iso' | 'top' | 'front' | 'side' | 'reset';
+  name: 'iso' | 'top' | 'front' | 'side' | 'reset' | 'target' | 'camera';
   k: number;
 }
 
@@ -762,18 +767,27 @@ function NavRig({
   useEffect(() => {
     if (!viewReq || !controls) return;
     const tgt = new THREE.Vector3(0, 0, -0.55);
-    const pos: V3 =
-      viewReq.name === 'top'
-        ? [0.01, 9.5, -0.54]
-        : viewReq.name === 'front'
-          ? [0, 0.7, 7.6]
-          : viewReq.name === 'side'
-            ? [7.6, 0.9, -0.55]
-            : [4.8, 2.8, 7.4];
-    camera.position.set(...pos);
+    if (viewReq.name === 'target') {
+      const p = (followId && positionsRef.current.get(followId)) || fallback;
+      tgt.set(p[0], p[1] + 0.3, p[2]);
+      camera.position.set(p[0] + 1.8, p[1] + 1.2, p[2] + 2.5);
+    } else if (viewReq.name === 'camera') {
+      tgt.set(SAT_A_POSITION[0], SAT_A_POSITION[1] + 0.22, SAT_A_POSITION[2]);
+      camera.position.set(SAT_A_POSITION[0] + 1.4, SAT_A_POSITION[1] + 0.8, SAT_A_POSITION[2] + 2.0);
+    } else {
+      const pos: V3 =
+        viewReq.name === 'top'
+          ? [0.01, 9.5, -0.54]
+          : viewReq.name === 'front'
+            ? [0, 0.7, 7.6]
+            : viewReq.name === 'side'
+              ? [7.6, 0.9, -0.55]
+              : [4.8, 2.8, 7.4];
+      camera.position.set(...pos);
+    }
     controls.target.copy(tgt);
     controls.update();
-  }, [viewReq, camera, controls]);
+  }, [viewReq, camera, controls, followId, positionsRef, fallback]);
 
   useFrame(() => {
     if (!followOn || !controls) return;
@@ -879,7 +893,13 @@ function SceneContent(props: {
         <group position={[0, 0.62, 0]}>
           <Beacon color={state === 'LOCKED' ? '#c4ffd9' : '#bfe0ff'} scale={1} />
         </group>
-        {settings.labels && <ObjLabel text={liveId} offset={0.48} color="#f0e2c4" />}
+        {settings.labels && (
+          <ObjLabel
+            text={selectedId === liveId ? (liveId.startsWith('BEACON') ? 'TARGET-01' : liveId) : (liveId.startsWith('TARGET') ? liveId.replace('TARGET', 'BEACON') : liveId)}
+            offset={0.48}
+            color="#f0e2c4"
+          />
+        )}
         {selectedId === liveId && (
           <mesh>
             <sphereGeometry args={[0.85, 16, 12]} />
@@ -967,7 +987,27 @@ const chipBtn: React.CSSProperties = {
 };
 const chipOn: React.CSSProperties = { borderColor: '#d98618', color: '#f0b35a' };
 
-let localCounter = 0;
+let localTargetCounter = 1;
+let localSatCounter = 1;
+
+// ── Responsive Resizer for Operator Viewport ───────────────────────
+function ResponsiveResizer({ containerWidth, containerHeight }: { containerWidth?: number; containerHeight?: number }) {
+  const { gl, camera, size } = useThree();
+
+  useEffect(() => {
+    const w = containerWidth && containerWidth > 0 ? containerWidth : size.width;
+    const h = containerHeight && containerHeight > 0 ? containerHeight : size.height;
+    if (w > 0 && h > 0) {
+      gl.setSize(w, h, false);
+      if ('aspect' in camera) {
+        (camera as THREE.PerspectiveCamera).aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+    }
+  }, [gl, camera, size.width, size.height, containerWidth, containerHeight]);
+
+  return null;
+}
 
 // ── Main component ───────────────────────────────────────────────
 interface Props {
@@ -976,6 +1016,25 @@ interface Props {
 }
 
 export default function Scene3D({ frame, history }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setContainerSize({ width, height });
+        }
+      }
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [settings, setSettings] = useState<SceneSettings>({ brightness: 1, stars: true, fov: true, trajectory: true, labels: true });
   const [objects, setObjects] = useState<SceneObjectDef[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -984,6 +1043,8 @@ export default function Scene3D({ frame, history }: Props) {
   const [followOn, setFollowOn] = useState(false);
   const [orbitEnabled, setOrbitEnabled] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShift, setShowShift] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [panelTick, setPanelTick] = useState<V3 | null>(null);
   const [offset, setOffset] = useState<V3>([0, 0, 0]);
   const offsetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -992,6 +1053,8 @@ export default function Scene3D({ frame, history }: Props) {
   const velocitiesRef = useRef<Map<string, V3>>(new Map());
 
   const liveId = frame?.target.id ?? 'BEACON-01';
+  const liveTargetLabel = liveId.startsWith('BEACON') ? liveId.replace('BEACON', 'TARGET') : liveId;
+  const liveBeaconLabel = liveId.startsWith('TARGET') ? liveId.replace('TARGET', 'BEACON') : liveId;
 
   const setS = (k: keyof SceneSettings, v: number | boolean) => setSettings((p) => ({ ...p, [k]: v }));
   const requestView = (name: ViewRequest['name']) => {
@@ -1001,32 +1064,61 @@ export default function Scene3D({ frame, history }: Props) {
 
   const addObject = (kind: LocalKind) => {
     if (objects.length >= 6) return;
-    localCounter += 1;
-    const n = String(localCounter).padStart(2, '0');
     const now = performance.now() / 1000;
-    const def: SceneObjectDef = {
-      id: kind === 'target' ? `XTGT-${n}` : `XSAT-${n}`,
-      kind,
-      label: kind === 'target' ? `TARGET-${n}` : `SAT-${n}`,
-      base: [0.6 + objects.length * 0.7, 0.5 + (objects.length % 2) * 0.5, 1.2 - objects.length * 0.4],
-      rotation: [0, 0, 0],
-      motion: kind === 'target' ? 'circular' : 'static',
-      ampH: 1.1,
-      ampV: 0.45,
-      period: 14,
-      vel: [0.12, 0.04, 0],
-      spawnedAt: now,
-    };
-    setObjects((p) => [...p, def]);
-    setSelectedId(def.id);
-    setGizmoMode('translate');
+    if (kind === 'target') {
+      localTargetCounter += 1;
+      const n = String(localTargetCounter).padStart(2, '0');
+      const def: SceneObjectDef = {
+        id: `XTGT-${n}`,
+        kind: 'target',
+        label: `TARGET-${n}`,
+        displayLabel: `TARGET-${n}`,
+        hostId: `SAT-${n}`,
+        beaconId: `BEACON-${n}`,
+        trackingState: 'IDLE',
+        base: [0.6 + objects.length * 0.7, 0.5 + (objects.length % 2) * 0.5, 1.2 - objects.length * 0.4],
+        rotation: [0, 0, 0],
+        motion: 'static',
+        ampH: 1.1,
+        ampV: 0.45,
+        period: 14,
+        vel: [0, 0, 0],
+        spawnedAt: now,
+      };
+      setObjects((p) => [...p, def]);
+      setSelectedId(def.id);
+      setGizmoMode('translate');
+    } else {
+      localSatCounter += 1;
+      const n = String(localSatCounter).padStart(2, '0');
+      const def: SceneObjectDef = {
+        id: `XSAT-${n}`,
+        kind: 'satellite',
+        label: `SAT-${n}`,
+        displayLabel: `SAT-${n}`,
+        hostId: `SAT-${n}`,
+        beaconId: `BEACON-${n}`,
+        trackingState: 'IDLE',
+        base: [0.6 + objects.length * 0.7, 0.5 + (objects.length % 2) * 0.5, 1.2 - objects.length * 0.4],
+        rotation: [0, 0, 0],
+        motion: 'static',
+        ampH: 1.1,
+        ampV: 0.45,
+        period: 14,
+        vel: [0, 0, 0],
+        spawnedAt: now,
+      };
+      setObjects((p) => [...p, def]);
+      setSelectedId(def.id);
+      setGizmoMode('translate');
+    }
   };
 
   const updateObject = (id: string, patch: Partial<SceneObjectDef>) =>
     setObjects((p) => p.map((o) => (o.id === id ? { ...o, ...patch } : o)));
 
   const deleteSelected = () => {
-    if (!selectedId || selectedId === 'SAT-01' || selectedId === liveId) return;
+    if (!selectedId || selectedId === 'SAT-01' || selectedId === liveId || selectedId === liveTargetLabel) return;
     setObjects((p) => p.filter((o) => o.id !== selectedId));
     positionsRef.current.delete(selectedId);
     velocitiesRef.current.delete(selectedId);
@@ -1034,7 +1126,7 @@ export default function Scene3D({ frame, history }: Props) {
   };
 
   const selectedLocal = objects.find((o) => o.id === selectedId) ?? null;
-  const isLiveBeacon = selectedId === liveId;
+  const isLiveBeacon = selectedId === liveId || selectedId === liveTargetLabel || selectedId === liveBeaconLabel;
   const isLiveSat = selectedId === 'SAT-01';
   const isLiveSelection = isLiveBeacon || isLiveSat;
 
@@ -1068,14 +1160,29 @@ export default function Scene3D({ frame, history }: Props) {
   const tstate = frame?.target_state ?? 'READY';
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', background: SCENE_BG, overflow: 'hidden' }}>
+    <div
+      ref={containerRef}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        minWidth: 0,
+        minHeight: 0,
+        flex: 1,
+        background: SCENE_BG,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <Canvas
         camera={{ position: [4.8, 2.8, 7.4], fov: 43, near: 0.01, far: 120 }}
         gl={{ antialias: true, alpha: false, logarithmicDepthBuffer: true }}
         dpr={[1, 1.5]}
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'block', flex: 1 }}
         onPointerMissed={() => setSelectedId(null)}
       >
+        <ResponsiveResizer containerWidth={containerSize?.width} containerHeight={containerSize?.height} />
         <SceneContent
           frame={frame}
           history={history}
@@ -1098,9 +1205,9 @@ export default function Scene3D({ frame, history }: Props) {
       {/* ── overlay root (non-interactive except controls) ── */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: 'monospace' }}>
         {/* top-left: identity + live link readout (proves 2D↔3D connection) */}
-        <div style={{ position: 'absolute', top: 8, left: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ position: 'absolute', top: 48, left: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ ...panel, padding: '4px 8px' }}>
-            <span style={{ color: '#f0b35a' }}>■ 3D DIGITAL TWIN</span>
+            <span style={{ color: '#f0b35a' }}>■ ASTERIA · 3D DIGITAL TWIN</span>
             <span style={{ color: '#626a6d' }}> · OPERATOR VIEW</span>
           </div>
           <div style={{ ...panel, padding: '4px 8px', color: '#8fa9a1' }}>
@@ -1109,7 +1216,7 @@ export default function Scene3D({ frame, history }: Props) {
         </div>
 
         {/* top-right: scene settings */}
-        <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+        <div style={{ position: 'absolute', top: 48, right: 12, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
           <button style={{ ...chipBtn, pointerEvents: 'auto', ...(showSettings ? chipOn : {}) }} onClick={() => setShowSettings((s) => !s)}>
             ⚙ SCENE
           </button>
@@ -1137,10 +1244,20 @@ export default function Scene3D({ frame, history }: Props) {
           )}
         </div>
 
-        {/* left: navigation */}
-        <div style={{ position: 'absolute', left: 8, top: 96, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ ...panel, padding: '3px 6px', color: '#8d9195' }}>NAV</div>
-          {(['iso', 'top', 'front', 'side'] as const).map((v) => (
+        {/* left: navigation & view modes */}
+        <div style={{ position: 'absolute', left: 12, top: 124, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ ...panel, padding: '3px 6px', color: '#8d9195' }}>VIEWS</div>
+          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('iso')} title="Full environment view">
+            FULL
+          </button>
+          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('target')} title="Frame target and beacon">
+            TARGET
+          </button>
+          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('camera')} title="Frame FSOC camera rig">
+            CAMERA
+          </button>
+          <div style={{ ...panel, padding: '3px 6px', color: '#8d9195', marginTop: 2 }}>ANGLES</div>
+          {(['top', 'front', 'side'] as const).map((v) => (
             <button key={v} style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView(v)} title={`${v} view`}>
               {v.toUpperCase()}
             </button>
@@ -1163,112 +1280,290 @@ export default function Scene3D({ frame, history }: Props) {
         {/* bottom-left: objects + gizmo */}
         <div style={{ position: 'absolute', left: 8, bottom: 8, display: 'flex', flexDirection: 'column', gap: 4, maxWidth: '46%' }}>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => addObject('target')} title="Add visualisation-only target">
+            <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => addObject('target')} title="Add new remote target platform">
               + ADD TARGET
             </button>
-            <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => addObject('satellite')} title="Add visualisation-only satellite terminal">
+            <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => addObject('satellite')} title="Add satellite terminal">
               + ADD SAT
             </button>
           </div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {['SAT-01', liveId, ...objects.map((o) => o.id)].map((id) => (
-              <button
-                key={id}
-                style={{ ...chipBtn, pointerEvents: 'auto', ...(selectedId === id ? chipOn : {}) }}
-                onClick={() => setSelectedId(id)}
-              >
-                {id}
-              </button>
-            ))}
+            {['SAT-01', liveId, ...objects.map((o) => o.id)].map((id) => {
+              const obj = objects.find((o) => o.id === id);
+              const isSelected = selectedId === id || (id === liveId && isLiveBeacon);
+              const label = id === 'SAT-01' ? 'SAT-01' : id === liveId ? liveTargetLabel : (obj?.displayLabel || id);
+              return (
+                <button
+                  key={id}
+                  style={{ ...chipBtn, pointerEvents: 'auto', ...(isSelected ? chipOn : {}) }}
+                  onClick={() => setSelectedId(id)}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
-          {selectedLocal && (
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                style={{ ...chipBtn, pointerEvents: 'auto', ...(gizmoMode === 'translate' ? chipOn : {}) }}
-                onClick={() => setGizmoMode((m) => (m === 'translate' ? null : 'translate'))}
-              >
-                ✥ MOVE
-              </button>
-              <button
-                style={{ ...chipBtn, pointerEvents: 'auto', ...(gizmoMode === 'rotate' ? chipOn : {}) }}
-                onClick={() => setGizmoMode((m) => (m === 'rotate' ? null : 'rotate'))}
-              >
-                ⟳ ROTATE
-              </button>
-              <button style={{ ...chipBtn, pointerEvents: 'auto', color: '#c98a7a' }} onClick={deleteSelected}>
-                ✕ DELETE
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* right: selected-object properties (compact) */}
+        {/* right: selected-object structured inspector */}
         {(selectedLocal || isLiveSelection) && (
-          <div style={{ ...panel, position: 'absolute', right: 8, top: 96, width: 188, padding: 8, pointerEvents: 'auto' }}>
-            <div style={{ color: '#f0b35a', marginBottom: 4 }}>▸ {selectedId}{selectedLocal ? ` · ${selectedLocal.kind.toUpperCase()}` : ' · LIVE'}</div>
-            <PropRow label="POS" value={shownPos ? `${shownPos[0].toFixed(2)}, ${shownPos[1].toFixed(2)}, ${shownPos[2].toFixed(2)}` : '—'} />
-            {selectedLocal ? (
-              <>
-                <PropRow label="ROT°" value={`${(selectedLocal.rotation[0] * 57.3).toFixed(0)}, ${(selectedLocal.rotation[1] * 57.3).toFixed(0)}, ${(selectedLocal.rotation[2] * 57.3).toFixed(0)}`} />
-                <PropRow label="VEL" value={liveVel ? `${liveVel[0].toFixed(2)}, ${liveVel[1].toFixed(2)}, ${liveVel[2].toFixed(2)} m/s` : '—'} />
-                <div style={{ marginTop: 4, color: '#8d9195' }}>MOTION</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
+          <div style={{ ...panel, position: 'absolute', right: 8, top: 96, width: 220, padding: 10, pointerEvents: 'auto', maxHeight: 'calc(100% - 150px)', overflowY: 'auto' }}>
+            {/* Header: Name + Tracking State Dot */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
+              <div style={{ color: '#f0b35a', fontWeight: 600, fontSize: 13 }}>
+                {isLiveBeacon ? liveTargetLabel : isLiveSat ? 'SAT-01' : (selectedLocal?.displayLabel || selectedId)}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    backgroundColor: isLiveBeacon
+                      ? (tstate === 'LOCKED' ? '#8fe0b4' : tstate === 'TRACKING' ? '#ffd9a0' : tstate === 'LOST' ? '#e08a7a' : '#9fd8e8')
+                      : isLiveSat
+                        ? '#7fc4d4'
+                        : selectedLocal?.trackingState === 'TRACKING' ? '#ffd9a0' : selectedLocal?.trackingState === 'LOCKED' ? '#8fe0b4' : '#6f828a',
+                  }}
+                />
+                <span style={{ color: '#8fa9a1', textTransform: 'uppercase' }}>
+                  {isLiveBeacon ? tstate : isLiveSat ? 'ONLINE' : (selectedLocal?.trackingState ?? 'IDLE')}
+                </span>
+              </div>
+            </div>
+
+            {/* Entity Hierarchy Section */}
+            <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
+              <PropRow label="HOST" value={isLiveBeacon ? 'SAT-02' : isLiveSat ? 'LOCAL TERMINAL' : (selectedLocal?.hostId ?? 'SAT-02')} />
+              <PropRow label="BEACON" value={isLiveBeacon ? liveBeaconLabel : isLiveSat ? 'FSOC-CAM-01' : (selectedLocal?.beaconId ?? 'BEACON-02')} />
+            </div>
+
+            {/* Position & Velocity */}
+            <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
+              <div style={{ color: '#8d9195', fontSize: 10, marginBottom: 2 }}>POSITION (WORLD)</div>
+              {isLiveBeacon ? (
+                <>
+                  <PropRow label="X" value={`${(frame?.target.position.x ?? 0).toFixed(2)} m`} />
+                  <PropRow label="Y" value={`${(frame?.target.position.y ?? 0).toFixed(2)} m`} />
+                  <PropRow label="Z" value={`${(frame?.target.position.z ?? 0).toFixed(2)} m`} />
+                </>
+              ) : isLiveSat ? (
+                <>
+                  <PropRow label="X" value={`${SAT_A_POSITION[0].toFixed(2)} m`} />
+                  <PropRow label="Y" value={`${SAT_A_POSITION[1].toFixed(2)} m`} />
+                  <PropRow label="Z" value={`${SAT_A_POSITION[2].toFixed(2)} m`} />
+                </>
+              ) : (
+                <>
+                  <PropRow label="X" value={`${shownPos ? ((shownPos[0] - SAT_A_POSITION[0]) / WORLD_SCALE).toFixed(2) : '0.00'} m`} />
+                  <PropRow label="Y" value={`${shownPos ? ((shownPos[1] - SAT_A_POSITION[1]) / WORLD_SCALE).toFixed(2) : '0.00'} m`} />
+                  <PropRow label="Z" value={`${shownPos ? Math.max(50, (shownPos[2] - SAT_A_POSITION[2]) / WORLD_SCALE).toFixed(2) : '350.00'} m`} />
+                </>
+              )}
+
+              <div style={{ color: '#8d9195', fontSize: 10, marginTop: 4, marginBottom: 2 }}>VELOCITY</div>
+              {isLiveBeacon ? (
+                <>
+                  <PropRow label="X" value={`${(frame?.target.velocity.x ?? 0).toFixed(2)} m/s`} />
+                  <PropRow label="Y" value={`${(frame?.target.velocity.y ?? 0).toFixed(2)} m/s`} />
+                  <PropRow label="Z" value={`${(frame?.target.velocity.z ?? 0).toFixed(2)} m/s`} />
+                </>
+              ) : isLiveSat ? (
+                <PropRow label="STATIC" value="0.00 m/s" />
+              ) : (
+                <>
+                  <PropRow label="X" value={`${liveVel ? (liveVel[0] / WORLD_SCALE * 0.05).toFixed(2) : '0.00'} m/s`} />
+                  <PropRow label="Y" value={`${liveVel ? (liveVel[1] / WORLD_SCALE * 0.05).toFixed(2) : '0.00'} m/s`} />
+                  <PropRow label="Z" value={`${liveVel ? (liveVel[2] / WORLD_SCALE * 0.05).toFixed(2) : '0.00'} m/s`} />
+                </>
+              )}
+            </div>
+
+            {/* Motion Mode Section */}
+            {selectedLocal && selectedLocal.kind === 'target' && (
+              <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
+                <div style={{ color: '#8d9195', fontSize: 10, marginBottom: 3 }}>MOTION</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
                   {MOTION_MODES.map((m) => (
                     <button
                       key={m}
-                      style={{ ...chipBtn, padding: '2px 5px', fontSize: 9, pointerEvents: 'auto', ...(selectedLocal.motion === m ? chipOn : {}) }}
+                      style={{
+                        ...chipBtn,
+                        padding: '3px 4px',
+                        fontSize: 9,
+                        pointerEvents: 'auto',
+                        textAlign: 'center',
+                        ...(selectedLocal.motion === m ? chipOn : {}),
+                      }}
                       onClick={() => updateObject(selectedLocal.id, { motion: m, spawnedAt: performance.now() / 1000 })}
                     >
-                      {m === 'figure8' ? 'FIG-8' : m.toUpperCase().slice(0, 6)}
+                      {m === 'figure8' ? 'FIG-8' : m.toUpperCase()}
                     </button>
                   ))}
                 </div>
-                <div style={{ marginTop: 4, color: '#8d9195' }}>TRAJ {selectedLocal.motion.toUpperCase()} · T {selectedLocal.period}s</div>
-                <input
-                  type="range"
-                  min={4}
-                  max={30}
-                  step={1}
-                  value={selectedLocal.period}
-                  onChange={(e) => updateObject(selectedLocal.id, { period: Number(e.target.value) })}
-                  style={{ width: '100%' }}
-                />
-              </>
-            ) : isLiveBeacon ? (
-              <>
-                <PropRow label="VEL" value={frame ? `${frame.target.velocity.x.toFixed(2)}, ${frame.target.velocity.y.toFixed(2)}, ${frame.target.velocity.z.toFixed(2)} m/s` : '—'} />
-                <PropRow label="TRAJ" value={(backendTraj as string) ?? 'BACKEND LIVE'} />
-                <div style={{ marginTop: 6, color: '#f0b35a' }}>3D SHIFT → LOOP (m)</div>
-                {(['X', 'Y', 'Z'] as const).map((ax, i) => (
-                  <div key={ax}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span style={{ color: '#8d9195' }}>{ax}</span>
-                      <span>{offset[i].toFixed(1)}</span>
-                    </div>
-                    <input
-                      type="range" min={-30} max={30} step={0.5}
-                      value={offset[i]}
-                      onChange={(e) => {
-                        const v: V3 = [...offset] as V3;
-                        v[i] = Number(e.target.value);
-                        pushOffset(v);
-                      }}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                ))}
-                <div style={{ marginTop: 2, color: '#8d9195', fontSize: 9 }}>
-                  BACKEND {frame?.target_offset ? `(${frame.target_offset.x.toFixed(1)}, ${frame.target_offset.y.toFixed(1)}, ${frame.target_offset.z.toFixed(1)})` : '(0, 0, 0)'} · MOVES TRUE BEACON
-                </div>
-              </>
-            ) : (
-              <>
+              </div>
+            )}
+
+            {isLiveBeacon && (
+              <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
+                <PropRow label="MOTION" value={((backendTraj as string) || 'LIVE TRAJECTORY').toUpperCase()} />
+                <PropRow label="TRACKING" value={tstate} />
+              </div>
+            )}
+
+            {isLiveSat && (
+              <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
                 <PropRow label="PAN" value={`${pan.toFixed(2)}°`} />
                 <PropRow label="TILT" value={`${tilt.toFixed(2)}°`} />
-                <PropRow label="FOV" value={frame ? `${frame.camera.fov_h}°×${frame.camera.fov_v}°` : '—'} />
-                <div style={{ marginTop: 4, color: '#8d9195', fontSize: 9 }}>VIRTUAL TRACKING CAMERA HOST — DRIVEN BY PID</div>
-              </>
+                <PropRow label="FOV" value={frame ? `${frame.camera.fov_h}°×${frame.camera.fov_v}°` : '4°×3°'} />
+              </div>
             )}
+
+            {/* Action Buttons: TRACK TARGET & FOCUS TARGET */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+              {selectedLocal && selectedLocal.kind === 'target' && (
+                <button
+                  style={{
+                    ...chipBtn,
+                    pointerEvents: 'auto',
+                    backgroundColor: '#1b382d',
+                    borderColor: '#4eb483',
+                    color: '#8fe0b4',
+                    fontWeight: 600,
+                    textAlign: 'center',
+                    padding: '6px 8px',
+                  }}
+                  disabled={switching}
+                  onClick={async () => {
+                    setSwitching(true);
+                    try {
+                      const curP = positionsRef.current.get(selectedLocal.id) || selectedLocal.base;
+                      const curV = velocitiesRef.current.get(selectedLocal.id) || selectedLocal.vel;
+                      const simX = (curP[0] - SAT_A_POSITION[0]) / WORLD_SCALE;
+                      const simY = (curP[1] - SAT_A_POSITION[1]) / WORLD_SCALE;
+                      const simZ = Math.max(80, (curP[2] - SAT_A_POSITION[2]) / WORLD_SCALE);
+                      await fsocApi.switchTarget({
+                        target_id: selectedLocal.displayLabel,
+                        position: { x: simX, y: simY, z: simZ },
+                        velocity: { x: curV[0] / WORLD_SCALE * 0.05, y: curV[1] / WORLD_SCALE * 0.05, z: 0 },
+                        trajectory: selectedLocal.motion,
+                        beacon_offset: { x: 0, y: 0, z: 0 },
+                      });
+                      setObjects((prev) =>
+                        prev.map((o) =>
+                          o.id === selectedLocal.id ? { ...o, trackingState: 'TRACKING' } : { ...o, trackingState: 'IDLE' }
+                        )
+                      );
+                    } catch (e) {
+                      console.error('Failed to switch target', e);
+                    } finally {
+                      setSwitching(false);
+                    }
+                  }}
+                >
+                  {switching ? 'SWITCHING…' : '🎯 TRACK TARGET'}
+                </button>
+              )}
+
+              {isLiveBeacon && (
+                <button
+                  style={{
+                    ...chipBtn,
+                    pointerEvents: 'auto',
+                    backgroundColor: '#162832',
+                    borderColor: '#385764',
+                    color: '#8fa9a1',
+                    fontSize: 9,
+                    textAlign: 'center',
+                    cursor: 'default',
+                  }}
+                  disabled
+                >
+                  ✓ ACTIVE TRACKED TARGET
+                </button>
+              )}
+
+              <button
+                style={{
+                  ...chipBtn,
+                  pointerEvents: 'auto',
+                  borderColor: '#7fc4d4',
+                  color: '#9fd8e8',
+                  textAlign: 'center',
+                  padding: '5px 8px',
+                }}
+                onClick={() => {
+                  if (isLiveSat) {
+                    requestView('camera');
+                  } else {
+                    requestView('target');
+                  }
+                }}
+              >
+                🔍 {isLiveSat ? 'FOCUS TERMINAL' : 'FOCUS TARGET'}
+              </button>
+
+              {/* Collapsible fine-tuning: 3D shift for live beacon, gizmo for local */}
+              {isLiveBeacon && (
+                <div style={{ marginTop: 4 }}>
+                  <button
+                    style={{ ...chipBtn, width: '100%', fontSize: 9, padding: '2px 4px', color: '#8d9195' }}
+                    onClick={() => setShowShift((s) => !s)}
+                  >
+                    {showShift ? '▾ HIDE 3D SHIFT' : '▸ 3D SHIFT → LOOP (m)'}
+                  </button>
+                  {showShift && (
+                    <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                      {(['X', 'Y', 'Z'] as const).map((ax, i) => (
+                        <div key={ax}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9 }}>
+                            <span style={{ color: '#8d9195' }}>{ax}</span>
+                            <span>{offset[i].toFixed(1)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={-30}
+                            max={30}
+                            step={0.5}
+                            value={offset[i]}
+                            onChange={(e) => {
+                              const v: V3 = [...offset] as V3;
+                              v[i] = Number(e.target.value);
+                              pushOffset(v);
+                            }}
+                            style={{ width: '100%' }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {selectedLocal && (
+                <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+                  <button
+                    style={{ ...chipBtn, flex: 1, padding: '3px 2px', fontSize: 9, pointerEvents: 'auto', ...(gizmoMode === 'translate' ? chipOn : {}) }}
+                    onClick={() => setGizmoMode((m) => (m === 'translate' ? null : 'translate'))}
+                  >
+                    ✥ MOVE
+                  </button>
+                  <button
+                    style={{ ...chipBtn, flex: 1, padding: '3px 2px', fontSize: 9, pointerEvents: 'auto', ...(gizmoMode === 'rotate' ? chipOn : {}) }}
+                    onClick={() => setGizmoMode((m) => (m === 'rotate' ? null : 'rotate'))}
+                  >
+                    ⟳ ROT
+                  </button>
+                  <button
+                    style={{ ...chipBtn, padding: '3px 6px', fontSize: 9, pointerEvents: 'auto', color: '#c98a7a' }}
+                    onClick={deleteSelected}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

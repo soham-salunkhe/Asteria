@@ -219,6 +219,8 @@ export interface SensorNoise {
   enabled: boolean;
   /** 0-1 */
   noise_level: number;
+  /** 'gaussian' | 'salt_pepper' | 'poisson' */
+  noise_type?: string;
 }
 
 export interface TargetMotionVariation {

@@ -12,8 +12,8 @@ const firebaseConfig = {
   appId:             import.meta.env.VITE_FIREBASE_APP_ID             as string,
 };
 
-export const demoMode = import.meta.env.VITE_DEMO_MODE === 'true';
 const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
+export const demoMode = import.meta.env.VITE_DEMO_MODE === 'true' || !hasFirebaseConfig;
 
 // Guard against double-initialisation in HMR / strict-mode
 const app = hasFirebaseConfig

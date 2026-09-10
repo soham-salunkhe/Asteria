@@ -104,6 +104,14 @@ class TargetOffsetRequest(BaseModel):
     z: float = Field(0.0, ge=-100.0, le=100.0)
 
 
+class SwitchTargetRequest(BaseModel):
+    target_id: str = "TARGET-01"
+    position: Optional[dict] = None
+    velocity: Optional[dict] = None
+    trajectory: str = "static"
+    beacon_offset: Optional[dict] = None
+
+
 class ScenarioCreateRequest(BaseModel):
     name: str
     description: str = ''
@@ -171,6 +179,19 @@ def update_target_offset(req: TargetOffsetRequest):
     in the 3D view). Flows through projection → feed → detection → PID."""
     engine.set_target_offset(req.x, req.y, req.z)
     return {'success': True}
+
+
+@app.post('/api/simulation/switch_target')
+def switch_target(req: SwitchTargetRequest):
+    """Switch coarse-alignment tracking objective to another target entity."""
+    engine.switch_target(
+        target_id=req.target_id,
+        position=req.position,
+        velocity=req.velocity,
+        trajectory=req.trajectory,
+        beacon_offset=req.beacon_offset,
+    )
+    return {'success': True, 'target_id': req.target_id}
 
 
 # ── Scenarios ─────────────────────────────────────────────────

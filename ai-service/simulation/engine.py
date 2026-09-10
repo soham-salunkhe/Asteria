@@ -198,10 +198,41 @@ class SimulationEngine:
         await self.stop()
         self._reset_state()
 
+    # Disturbance sections in stable order: (config key, label)
+    DISTURBANCE_SECTIONS = (
+        ('atmospheric_turbulence', 'ATMOSPHERIC TURBULENCE'),
+        ('platform_vibration', 'PLATFORM VIBRATION'),
+        ('camera_motion', 'CAMERA MOTION'),
+        ('sensor_noise', 'SENSOR NOISE'),
+        ('target_motion_variation', 'TARGET MOTION VARIATION'),
+    )
+
     def update_disturbances(self, config: dict) -> None:
-        dc = self._dict_to_disturbance_config(config)
+        prev = {
+            key: bool(getattr(self._disturbances.config, key).enabled)
+            for key, _ in self.DISTURBANCE_SECTIONS
+        }
+        dc = self._dict_to_disturbance_config(config or {})
         self._disturbances.update_config(dc)
-        self._emit_event('info', f'DISTURBANCES UPDATED — INDEX {self._disturbances.config.atmospheric_turbulence.strength:.2f}')
+        # Emit one event per disturbance whose enabled flag actually changed,
+        # so the event log reflects authoritative state transitions only.
+        changed = False
+        for key, label in self.DISTURBANCE_SECTIONS:
+            now = bool(getattr(dc, key).enabled)
+            if now and not prev[key]:
+                self._emit_event('info', f'{label} ENABLED')
+                changed = True
+            elif not now and prev[key]:
+                self._emit_event('info', f'{label} DISABLED')
+                changed = True
+        if not changed:
+            active = [label for key, label in self.DISTURBANCE_SECTIONS
+                      if getattr(dc, key).enabled]
+            if active:
+                self._emit_event('info',
+                                 f'DISTURBANCES UPDATED — {", ".join(active)}')
+            else:
+                self._emit_event('info', 'ALL DISTURBANCES DISABLED')
 
     def update_pid(self, config: dict) -> None:
         pc = PIDConfig(
@@ -233,6 +264,65 @@ class SimulationEngine:
         cz = max(-100.0, min(100.0, z))
         self._target_offset = Vec3(cx, cy, cz)
         self._emit_event('info', f'TARGET OFFSET → ({cx:.1f}, {cy:.1f}, {cz:.1f}) m')
+
+    def switch_target(
+        self,
+        target_id: str = "TARGET-01",
+        position: Optional[dict] = None,
+        velocity: Optional[dict] = None,
+        trajectory: str = "static",
+        beacon_offset: Optional[dict] = None,
+    ) -> None:
+        """Switch coarse-alignment tracking objective to target_id.
+        Re-initializes the active tracked target, resets state to SEARCHING,
+        and clears Kalman/PID/lock histories.
+        """
+        init_pos = position or {'x': 0.0, 'y': 0.0, 'z': 350.0}
+        init_vel = velocity or {'x': 0.0, 'y': 0.0, 'z': 0.0}
+        bo = beacon_offset or {'x': 0.0, 'y': 0.0, 'z': 0.0}
+
+        traj_map = {
+            'static': 'static',
+            'straight': 'linear',
+            'linear': 'linear',
+            'circular': 'circular',
+            'sinusoidal': 'sinusoidal',
+            'figure_8': 'figure_8',
+            'figure8': 'figure_8',
+            'fig-8': 'figure_8',
+            'spiral': 'spiral',
+            'random': 'random_walk',
+            'random_walk': 'random_walk',
+        }
+        resolved_traj = traj_map.get(trajectory.lower(), 'static')
+
+        self._target = Target(TargetConfig(
+            id=target_id,
+            initial_position=Vec3(float(init_pos.get('x', 0)), float(init_pos.get('y', 0)), float(init_pos.get('z', 350))),
+            velocity=Vec3(float(init_vel.get('x', 0)), float(init_vel.get('y', 0)), float(init_vel.get('z', 0))),
+            trajectory=resolved_traj,
+            intensity=0.95,
+            beacon_size_px=10.0,
+            beacon_shape='square',
+            beacon_offset=Vec3(float(bo.get('x', 0)), float(bo.get('y', 0)), float(bo.get('z', 0))),
+            amplitude_h=80.0,
+            amplitude_v=40.0,
+            period=20.0,
+        ))
+        self._target_offset = Vec3(0.0, 0.0, 0.0)
+        self._lock_count = 0
+        self._search_t = 0.0
+        self._acq_started = False
+        self._target_state = 'SEARCHING'
+        self._kalman.reset()
+        self._pid.reset()
+        if hasattr(self._detector, 'set_target'):
+            self._detector.set_target(
+                self._target.config.id,
+                self._target.config.beacon_size_px,
+            )
+        self._emit_event('info', f'TRACK TARGET — {target_id}')
+        self._emit_event('info', f'SEARCHING FOR {target_id}')
 
     def _effective_beacon_pos(self) -> Vec3:
         """True beacon world position: target + mount offset + operator offset."""
@@ -720,21 +810,41 @@ class SimulationEngine:
             self._kalman = KalmanFilter2D(DEFAULT_KALMAN)
 
     def _dict_to_disturbance_config(self, d: dict) -> DisturbanceConfig:
+        """Merge an incoming (possibly partial) dict into the live config.
+
+        Sections absent from `d` keep their current values, so a partial
+        update — e.g. an empty WebSocket payload — can never wipe the other
+        disturbances back to defaults. Unknown keys and non-numeric values
+        are ignored/dropped by sanitisation instead of raising, because an
+        exception here would kill the single simulation task (freeze).
+        """
         from simulation.disturbances import (AtmosphericTurbulence,
                                               PlatformVibration, CameraMotion,
-                                              SensorNoise, TargetMotionVariation)
+                                              SensorNoise, TargetMotionVariation,
+                                              sanitize_config)
+        import dataclasses
+        classes = {
+            'atmospheric_turbulence': AtmosphericTurbulence,
+            'platform_vibration': PlatformVibration,
+            'camera_motion': CameraMotion,
+            'sensor_noise': SensorNoise,
+            'target_motion_variation': TargetMotionVariation,
+        }
         dc = DisturbanceConfig()
-        if 'atmospheric_turbulence' in d:
-            dc.atmospheric_turbulence = AtmosphericTurbulence(**d['atmospheric_turbulence'])
-        if 'platform_vibration' in d:
-            dc.platform_vibration = PlatformVibration(**d['platform_vibration'])
-        if 'camera_motion' in d:
-            dc.camera_motion = CameraMotion(**d['camera_motion'])
-        if 'sensor_noise' in d:
-            dc.sensor_noise = SensorNoise(**d['sensor_noise'])
-        if 'target_motion_variation' in d:
-            dc.target_motion_variation = TargetMotionVariation(**d['target_motion_variation'])
-        return dc
+        current = self._disturbances.config
+        for key, cls in classes.items():
+            known = {f.name for f in dataclasses.fields(cls)}
+            base = {f: getattr(getattr(current, key), f) for f in known}
+            incoming = d.get(key)
+            if isinstance(incoming, dict):
+                for f in known:
+                    if f in incoming:
+                        base[f] = incoming[f]
+            try:
+                setattr(dc, key, cls(**base))
+            except TypeError:
+                setattr(dc, key, getattr(current, key))
+        return sanitize_config(dc)
 
     def _reset_state(self) -> None:
         self._target.reset()

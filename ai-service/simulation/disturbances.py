@@ -9,6 +9,53 @@ import time
 from dataclasses import dataclass, field
 
 
+VALID_NOISE_TYPES = ('gaussian', 'salt_pepper', 'poisson')
+
+
+def _finite(value, default=0.0) -> float:
+    """Coerce to a finite float. Never raises, never returns NaN/inf/None.
+
+    Guards the simulation loop against malformed configs (e.g. null or
+    non-numeric values arriving over REST/WebSocket): bad input falls back
+    to `default` instead of killing the single asyncio simulation task.
+    """
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    return v
+
+
+def _clamp(value, lo: float, hi: float, default=0.0) -> float:
+    return max(lo, min(hi, _finite(value, default)))
+
+
+def sanitize_config(config: 'DisturbanceConfig') -> 'DisturbanceConfig':
+    """Clamp every disturbance parameter to its valid range in place."""
+    t = config.atmospheric_turbulence
+    t.enabled = bool(t.enabled)
+    t.strength = _clamp(t.strength, 0.0, 1.0, 0.3)
+    t.frequency = _clamp(t.frequency, 0.05, 50.0, 2.0)
+    v = config.platform_vibration
+    v.enabled = bool(v.enabled)
+    v.amplitude = _clamp(v.amplitude, 0.0, 10.0, 0.5)
+    v.frequency = _clamp(v.frequency, 0.05, 100.0, 10.0)
+    c = config.camera_motion
+    c.enabled = bool(c.enabled)
+    c.angular_disturbance = _clamp(c.angular_disturbance, 0.0, 5.0, 0.1)
+    n = config.sensor_noise
+    n.enabled = bool(n.enabled)
+    n.noise_level = _clamp(n.noise_level, 0.0, 1.0, 0.05)
+    if n.noise_type not in VALID_NOISE_TYPES:
+        n.noise_type = 'gaussian'
+    m = config.target_motion_variation
+    m.enabled = bool(m.enabled)
+    m.velocity_variation = _clamp(m.velocity_variation, 0.0, 2.0, 0.3)
+    return config
+
+
 @dataclass
 class AtmosphericTurbulence:
     enabled: bool = False
@@ -63,7 +110,7 @@ class DisturbanceEngine:
     """
 
     def __init__(self, config: DisturbanceConfig | None = None):
-        self.config = config or DisturbanceConfig()
+        self.config = sanitize_config(config or DisturbanceConfig())
         self._phase_turb: float = random.uniform(0, 2 * math.pi)
         self._phase_vib: float = random.uniform(0, 2 * math.pi)
         self._t = 0.0
@@ -72,7 +119,12 @@ class DisturbanceEngine:
         """
         Compute disturbances for this frame.
         Returns a dict with angular perturbations and metadata.
+        All outputs are guaranteed finite — invalid values are clamped,
+        never allowed to propagate NaN/inf into the simulation loop.
         """
+        dt = _finite(dt, 1.0 / 30.0)
+        if dt <= 0.0 or dt > 1.0:
+            dt = 1.0 / 30.0
         self._t += dt
         t = self._t
 
@@ -144,6 +196,16 @@ class DisturbanceEngine:
             cfg.target_motion_variation.enabled,
         ])
 
+        # Finite-output guard: a non-finite perturbation must never reach
+        # the camera/PID pipeline (it would poison telemetry JSON and the
+        # Kalman filter). Zero it — inputs are already sanitised above.
+        if not math.isfinite(dpan):
+            dpan = 0.0
+        if not math.isfinite(dtilt):
+            dtilt = 0.0
+        if not math.isfinite(total_index):
+            total_index = 0.0
+
         return {
             'dpan': dpan,
             'dtilt': dtilt,
@@ -158,7 +220,7 @@ class DisturbanceEngine:
         }
 
     def update_config(self, config: DisturbanceConfig) -> None:
-        self.config = config
+        self.config = sanitize_config(config)
 
     def _config_dict(self) -> dict:
         c = self.config
