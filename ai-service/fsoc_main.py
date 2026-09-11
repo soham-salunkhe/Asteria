@@ -1,5 +1,8 @@
 """
-FSOC Virtual PAT — Main FastAPI Application
+ASTERIA — Main FastAPI Application
+AI-Based Virtual Camera Tracking
+FSOC Coarse Alignment • PS169
+
 Provides REST API + WebSocket for real-time simulation telemetry.
 
 Run with:
@@ -27,8 +30,8 @@ db.init_db()
 
 # ── App ───────────────────────────────────────────────────────
 app = FastAPI(
-    title='FSOC Virtual PAT',
-    description='AI-Assisted Coarse Alignment & Tracking Simulation API',
+    title='ASTERIA',
+    description='AI-Based Virtual Camera Tracking — FSOC Coarse Alignment & PS169 Simulation API',
     version='1.0.0',
 )
 
@@ -98,6 +101,17 @@ class CameraAngleRequest(BaseModel):
     tilt: float = Field(0.0, ge=-90.0, le=90.0)
 
 
+class KalmanUpdateRequest(BaseModel):
+    process_noise_q: float = Field(2.0, ge=0.01, le=50.0)
+    measurement_noise_r: float = Field(5.0, ge=0.1, le=200.0)
+    initial_covariance: float = Field(500.0, ge=10.0, le=5000.0)
+
+
+class AtmosphereRequest(BaseModel):
+    mode: str = Field('clear')
+    strength: float = Field(0.5, ge=0.0, le=1.0)
+
+
 class TargetOffsetRequest(BaseModel):
     x: float = Field(0.0, ge=-100.0, le=100.0)
     y: float = Field(0.0, ge=-100.0, le=100.0)
@@ -110,6 +124,21 @@ class SwitchTargetRequest(BaseModel):
     velocity: Optional[dict] = None
     trajectory: str = "static"
     beacon_offset: Optional[dict] = None
+
+
+class RegisterTargetRequest(BaseModel):
+    target_id: str
+    config: Optional[dict] = None
+
+
+class RegisterCameraRequest(BaseModel):
+    camera_id: str
+    config: Optional[dict] = None
+
+
+class RegisterSatelliteRequest(BaseModel):
+    satellite_id: str
+    camera_id: str
 
 
 class ScenarioCreateRequest(BaseModel):
@@ -167,6 +196,23 @@ def update_pid(req: PIDUpdateRequest):
     return {'success': True}
 
 
+@app.post('/api/simulation/kalman')
+def update_kalman(req: KalmanUpdateRequest):
+    engine.update_kalman(req.dict())
+    return {'success': True}
+
+
+@app.post('/api/simulation/atmosphere')
+def update_atmosphere(req: AtmosphereRequest):
+    """Set detection-image atmospheric degradation (haze/fog/rain/low_light).
+
+    Applied inside FrameRenderer BEFORE the detector — never frontend-only.
+    """
+    engine.set_atmosphere(req.mode, req.strength)
+    return {'success': True, 'mode': engine._atmos_mode,
+            'strength': engine._atmos_strength}
+
+
 @app.post('/api/simulation/camera')
 def update_camera(req: CameraAngleRequest):
     engine.update_camera_angles(req.pan, req.tilt)
@@ -192,6 +238,40 @@ def switch_target(req: SwitchTargetRequest):
         beacon_offset=req.beacon_offset,
     )
     return {'success': True, 'target_id': req.target_id}
+
+
+@app.post('/api/simulation/reacquire')
+def reacquire():
+    """Force a fresh acquisition attempt for the current target from any state."""
+    engine.reacquire()
+    return {'success': True, 'target_id': engine._target.config.id, 'status': engine.status}
+
+
+@app.post('/api/simulation/register_target')
+def register_target(req: RegisterTargetRequest):
+    """Register a new target with the backend engine."""
+    result = engine.register_target(req.target_id, req.config)
+    return result
+
+
+@app.post('/api/simulation/register_camera')
+def register_camera(req: RegisterCameraRequest):
+    """Register a new FSOC camera with the backend engine."""
+    result = engine.register_camera(req.camera_id, req.config)
+    return result
+
+
+@app.post('/api/simulation/register_satellite')
+def register_satellite(req: RegisterSatelliteRequest):
+    """Register a satellite with its associated FSOC camera."""
+    result = engine.register_satellite(req.satellite_id, req.camera_id)
+    return result
+
+
+@app.get('/api/simulation/entity_registry')
+def get_entity_registry():
+    """Return the current entity registry for frontend synchronization."""
+    return engine.get_entity_registry()
 
 
 # ── Scenarios ─────────────────────────────────────────────────
@@ -351,7 +431,7 @@ async def websocket_endpoint(ws: WebSocket):
 def health():
     return {
         'status': 'healthy',
-        'service': 'fsoc-virtual-pat',
+        'service': 'asteria',
         'version': '1.0.0',
         'simulation_status': engine.status,
     }
@@ -359,4 +439,4 @@ def health():
 
 @app.get('/')
 def root():
-    return {'service': 'FSOC Virtual PAT API', 'docs': '/docs'}
+    return {'service': 'ASTERIA API', 'docs': '/docs'}

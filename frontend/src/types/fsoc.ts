@@ -301,6 +301,8 @@ export interface FrameMetrics {
   /** Tracking-phase image-space error, pixels — null before tracking */
   average_error_px: number | null;
   max_error_px: number | null;
+  /** O(1) RMSE over TRACKING/LOCKED frames — null until ≥2 samples */
+  rmse_px?: number | null;
   /** Frames with no valid measurement, % */
   target_loss_pct: number;
   avg_reacquisition_time: number | null;

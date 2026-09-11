@@ -27,6 +27,12 @@ from prediction.kalman import KalmanFilter2D, KalmanConfig
 from control.pid import PIDController, PIDConfig
 from analytics.metrics import RunMetrics
 from database import models as db
+from tracking_constants import (
+    TARGET_LOCK_THRESHOLD_PX,
+    ACQUIRING_THRESHOLD_PX,
+    LOCK_FRAMES_REQUIRED,
+    LOST_GRACE_SECONDS,
+)
 
 
 class VideoProcessor:
@@ -105,7 +111,7 @@ class VideoProcessor:
         missed_frames = 0
         lock_count = 0
 
-        LOST_THRESHOLD = int(fps * 1.0)   # 1 second of misses → LOST
+        LOST_THRESHOLD = int(fps * LOST_GRACE_SECONDS)
 
         try:
             while True:
@@ -187,15 +193,15 @@ class VideoProcessor:
 
                 # ── State machine (pixel-based lock, never forced) ──
                 if detection and meas_px is not None:
-                    if meas_px <= 10.0:
+                    if meas_px <= TARGET_LOCK_THRESHOLD_PX:
                         lock_count += 1
                     else:
                         lock_count = 0
-                    if lock_count >= 15:
+                    if lock_count >= LOCK_FRAMES_REQUIRED:
                         target_state = 'LOCKED'
-                    elif meas_px <= 10.0:
+                    elif meas_px <= TARGET_LOCK_THRESHOLD_PX:
                         target_state = 'TRACKING'
-                    elif meas_px <= 40.0:
+                    elif meas_px <= ACQUIRING_THRESHOLD_PX:
                         target_state = 'ACQUIRING'
                     else:
                         target_state = 'DETECTED'

@@ -10,6 +10,32 @@ from typing import Literal
 
 TrajectoryType = Literal['linear', 'sinusoidal', 'circular', 'random_walk', 'figure_8', 'spiral', 'static']
 
+# ── PS169 default-random initial location ──────────────────────────
+# Bounds are chosen so a sampled anchor stays inside the SEARCHING sweep
+# envelope (pan ±60°, tilt ±20° at ≥250 m depth):
+#   |az| = atan2(|x|, z) ≤ atan2(150, 250) ≈ 31°
+#   |el| = atan2(|y|, z) ≤ atan2(60, 250)  ≈ 13.5°
+# The beacon itself is never sampled — it remains attached to the target
+# via beacon_offset in the target's local frame.
+RANDOM_INIT_BOUNDS = {
+    'x': (-150.0, 150.0),
+    'y': (-30.0, 60.0),
+    'z': (250.0, 500.0),
+}
+
+
+def random_initial_position(seed=None) -> 'Vec3':
+    """Sample a projectable random target anchor.
+
+    Deterministic when `seed` is supplied, random otherwise.
+    """
+    rng = random.Random(seed)
+    return Vec3(
+        rng.uniform(*RANDOM_INIT_BOUNDS['x']),
+        rng.uniform(*RANDOM_INIT_BOUNDS['y']),
+        rng.uniform(*RANDOM_INIT_BOUNDS['z']),
+    )
+
 
 @dataclass
 class Vec3:
@@ -83,10 +109,18 @@ class Target:
         cfg = self.config
 
         if cfg.trajectory == 'linear':
-            vx = cfg.velocity.x * (1.0 + velocity_variation * self._noise())
-            vy = cfg.velocity.y * (1.0 + velocity_variation * self._noise())
-            self._position.x = self._origin.x + vx * t
-            self._position.y = self._origin.y + vy * t
+            # Use incremental integration like random_walk so that per-frame
+            # noise doesn't get multiplied by total elapsed time and cause
+            # large position jumps late in a run.
+            if velocity_variation != 0.0:
+                noise_x = self._noise()
+                noise_y = self._noise()
+            else:
+                noise_x = noise_y = 0.0
+            vx = cfg.velocity.x * (1.0 + velocity_variation * noise_x)
+            vy = cfg.velocity.y * (1.0 + velocity_variation * noise_y)
+            self._position.x += vx * dt
+            self._position.y += vy * dt
             self._velocity.x = vx
             self._velocity.y = vy
 
@@ -173,5 +207,10 @@ class Target:
         self._position = Vec3(self.config.initial_position.x,
                               self.config.initial_position.y,
                               self.config.initial_position.z)
+        self._velocity = Vec3(self.config.velocity.x,
+                              self.config.velocity.y,
+                              self.config.velocity.z)
         self._t = 0.0
+        self._rw_vx = self.config.velocity.x
+        self._rw_vy = self.config.velocity.y
         self.visible = True

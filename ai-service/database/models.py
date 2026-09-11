@@ -83,7 +83,9 @@ def init_db() -> None:
     """)
     # Ensure new PS4 performance columns exist
     for col in ('lost_count INTEGER', 'reacquisition_count INTEGER',
-                'avg_reacquisition_time REAL', 'max_reacquisition_time REAL'):
+                'avg_reacquisition_time REAL', 'max_reacquisition_time REAL',
+                'rmse_px REAL', 'average_error_px REAL', 'max_error_px REAL',
+                'total_frames INTEGER', 'target_loss_pct REAL'):
         try:
             conn.execute(f"ALTER TABLE simulation_runs ADD COLUMN {col}")
         except Exception:
@@ -161,7 +163,10 @@ def complete_run(run_id: str, summary: dict, final_state: str, status: str = 'co
            ended_at=?, duration=?, acquisition_time=?, average_error=?,
            max_error=?, lock_retention=?, avg_fps=?, processing_ms=?,
            detection_confidence=?, final_state=?, status=?,
-           lost_count=?, reacquisition_count=?, avg_reacquisition_time=?, max_reacquisition_time=?
+           lost_count=?, reacquisition_count=?,
+           avg_reacquisition_time=?, max_reacquisition_time=?,
+           rmse_px=?, average_error_px=?, max_error_px=?,
+           total_frames=?, target_loss_pct=?
            WHERE run_id=?""",
         (now, summary.get('duration'), summary.get('acquisition_time'),
          summary.get('average_error'), summary.get('max_error'),
@@ -170,6 +175,8 @@ def complete_run(run_id: str, summary: dict, final_state: str, status: str = 'co
          final_state, status,
          summary.get('lost_count', 0), summary.get('reacquisition_count', 0),
          summary.get('avg_reacquisition_time'), summary.get('max_reacquisition_time'),
+         summary.get('rmse_px'), summary.get('average_error_px'), summary.get('max_error_px'),
+         summary.get('total_frames', 0), summary.get('target_loss_pct', 0.0),
          run_id)
     )
     conn.commit()
@@ -181,9 +188,11 @@ def list_runs(limit: int = 50) -> list[dict]:
     rows = conn.execute(
         """SELECT run_id, scenario_name, environment, started_at,
                   duration, acquisition_time, average_error, max_error,
+                  average_error_px, max_error_px, rmse_px, target_loss_pct,
                   lock_retention, avg_fps, processing_ms,
                   detection_confidence, final_state, status,
-                  lost_count, reacquisition_count, avg_reacquisition_time, max_reacquisition_time
+                  lost_count, reacquisition_count,
+                  avg_reacquisition_time, max_reacquisition_time, total_frames
            FROM simulation_runs
            ORDER BY started_at DESC LIMIT ?""",
         (limit,)

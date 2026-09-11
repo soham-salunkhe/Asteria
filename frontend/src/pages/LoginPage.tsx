@@ -413,7 +413,7 @@ export const LoginPage = () => {
               /* ── LOGIN FORM ────────────────────────── */
               <>
                 <p className="signup-card-eyebrow">Welcome back</p>
-                <h2 className="signup-card-title">Sign in to FSOC PAT</h2>
+                <h2 className="signup-card-title">Sign in to ASTERIA</h2>
                 <p className="signup-card-sub">Access your simulation workstation.</p>
 
                 <div className="su-ornament" aria-hidden="true">
@@ -597,9 +597,9 @@ export const LoginPage = () => {
             ════════════════════════════════════════ */}
         <div className="login-right">
 
-          <Link to="/" className="login-brand-row" aria-label="FSOC PAT home">
+          <Link to="/" className="login-brand-row" aria-label="ASTERIA home">
             <BrandLogo />
-            <span className="login-brand-name">FSOC PAT</span>
+            <span className="login-brand-name">ASTERIA</span>
           </Link>
 
           <div className="login-right-eyebrow">

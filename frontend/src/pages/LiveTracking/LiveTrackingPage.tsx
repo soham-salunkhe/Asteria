@@ -247,8 +247,9 @@ export function LiveTrackingPage() {
           title="PERFORMANCE"
           fields={[
             { label: 'ACQ TIME',    value: met?.acquisition_time !== null && met?.acquisition_time !== undefined ? `${met.acquisition_time.toFixed(3)} s` : '—' },
-            { label: 'AVG ERROR',   value: fmt(met?.average_error, 4), unit: '°' },
-            { label: 'MAX ERROR',   value: fmt(met?.max_error, 4),     unit: '°' },
+            { label: 'AVG ERR',     value: met?.average_error_px !== null && met?.average_error_px !== undefined ? `${met.average_error_px.toFixed(2)} px` : fmt(met?.average_error, 4) + '°', highlight: (met?.average_error_px ?? Infinity) <= 10 },
+            { label: 'RMSE',        value: met?.rmse_px !== null && met?.rmse_px !== undefined ? `${met.rmse_px.toFixed(2)} px` : '—', highlight: (met?.rmse_px ?? Infinity) <= 10, warn: (met?.rmse_px ?? 0) > 10 },
+            { label: 'MAX ERR',     value: met?.max_error_px !== null && met?.max_error_px !== undefined ? `${met.max_error_px.toFixed(2)} px` : fmt(met?.max_error, 4) + '°', warn: (met?.max_error_px ?? 0) > 10 },
             { label: 'LOCK RET',    value: fmt(met?.lock_retention, 1), unit: '%', highlight: (met?.lock_retention ?? 0) > 95 },
             { label: 'DISTURBANCE', value: fmt(dis?.total_disturbance_index, 3), warn: (dis?.total_disturbance_index ?? 0) > 0.4 },
           ]}
@@ -287,11 +288,12 @@ function ps169Fields(ps169: Record<string, { value: number | null; pass: boolean
     };
   };
   return [
-    item('ACQ ≤2s', 'acquisition_s', v => `${v.toFixed(2)} s`),
-    item('AVG ≤10px', 'avg_error_px', v => `${v.toFixed(2)} px`),
-    item('MAX ≤10px', 'max_error_px', v => `${v.toFixed(2)} px`),
-    item('LOSS <5%', 'target_loss_pct', v => `${v.toFixed(1)} %`),
-    item('REACQ ≤1s', 'reacquisition_s', v => `${v.toFixed(2)} s`),
-    item('FPS ≥20', 'fps', v => `${v.toFixed(1)}`),
+    item('ACQ ≤2s',    'acquisition_s',   v => `${v.toFixed(2)} s`),
+    item('AVG ≤10px',  'avg_error_px',    v => `${v.toFixed(2)} px`),
+    item('RMSE ≤10px', 'rmse_px',         v => `${v.toFixed(2)} px`),
+    item('MAX ≤10px',  'max_error_px',    v => `${v.toFixed(2)} px`),
+    item('LOSS <5%',   'target_loss_pct', v => `${v.toFixed(1)} %`),
+    item('REACQ ≤1s',  'reacquisition_s', v => `${v.toFixed(2)} s`),
+    item('FPS ≥20',    'fps',             v => `${v.toFixed(1)}`),
   ];
 }

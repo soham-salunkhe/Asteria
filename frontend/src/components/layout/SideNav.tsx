@@ -42,8 +42,8 @@ export function SideNav({ wsStatus, simStatus }: Props) {
       <div className="sidenav-logo">
         <LogoMark />
         <div className="sidenav-logo-text">
-          <span className="sidenav-product">FSOC PAT</span>
-          <span className="sidenav-sub">Virtual Tracking System</span>
+          <span className="sidenav-product">ASTERIA</span>
+          <span className="sidenav-sub">AI-BASED VIRTUAL CAMERA TRACKING</span>
         </div>
       </div>
 

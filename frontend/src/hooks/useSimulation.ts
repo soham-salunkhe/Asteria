@@ -90,12 +90,18 @@ function useSimulationState() {
   // Throttle history updates to avoid excess re-renders
   const historyBuffer = useRef<TelemetryFrame[]>([]);
   const flushTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Status override from REST after control actions (stop/pause/reset).
+  // Needed because the backend loop exits on STOP, so no fresh telemetry
+  // arrives and `latest.sim_status` would otherwise stay frozen at 'running'.
+  // Cleared as soon as any live telemetry frame arrives.
+  const [statusOverride, setStatusOverride] = useState<string | null>(null);
 
   // Connect on mount
   useEffect(() => {
     simulationWS.connect(
       (frame) => {
         setLatest(frame);
+        setStatusOverride(null);
         // Reconcile the authoritative disturbance mirror with the backend
         // echo. No-op when identical (avoids extra renders at 30 fps).
         const echoed = frame.disturbance?.config;
@@ -133,17 +139,39 @@ function useSimulationState() {
 
   // ── Control actions ────────────────────────────────────────
 
+  // Re-read authoritative status after a control action. Used by
+  // stop/pause/reset where the WS stream may go quiet (no new frames).
+  const refreshStatus = useCallback(async (fallback: string) => {
+    try {
+      const s = await fsocApi.getStatus();
+      setStatusOverride(s.status);
+    } catch {
+      setStatusOverride(fallback);
+    }
+  }, []);
+
   const startDemo = useCallback(async () => {
     await fsocApi.startSimulation(undefined, true);
+    setStatusOverride(null); // fresh telemetry will confirm 'running'
   }, []);
 
   const startCustom = useCallback(async (config?: unknown) => {
     await fsocApi.startSimulation(config, false);
+    setStatusOverride(null); // fresh telemetry will confirm 'running'
   }, []);
 
-  const stop  = useCallback(() => fsocApi.stopSimulation(), []);
-  const pause = useCallback(() => fsocApi.pauseSimulation(), []);
-  const reset = useCallback(() => fsocApi.resetSimulation(), []);
+  const stop = useCallback(async () => {
+    await fsocApi.stopSimulation();
+    await refreshStatus('stopped');
+  }, [refreshStatus]);
+  const pause = useCallback(async () => {
+    await fsocApi.pauseSimulation();
+    await refreshStatus('paused');
+  }, [refreshStatus]);
+  const reset = useCallback(async () => {
+    await fsocApi.resetSimulation();
+    await refreshStatus('idle');
+  }, [refreshStatus]);
 
   // Write-through update: mirror locally first (instant UI feedback,
   // survives navigation), then push to the backend engine. The next
@@ -182,8 +210,8 @@ function useSimulationState() {
     events,
     // authoritative disturbance state (single source of truth)
     disturbances,
-    // convenience aliases
-    simStatus: latest?.sim_status ?? 'idle',
+    // convenience aliases (REST override wins until live telemetry resumes)
+    simStatus: statusOverride ?? latest?.sim_status ?? 'idle',
     targetState: latest?.target_state ?? 'READY',
     // actions
     startDemo,

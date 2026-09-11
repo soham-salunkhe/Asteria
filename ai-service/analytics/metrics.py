@@ -50,6 +50,10 @@ class RunMetrics:
         # Running max tracked as a scalar — no list scan needed
         self._max_angular_error: float = 0.0
         self._max_pixel_error: float = 0.0
+        # O(1) RMSE accumulators (PS169 Benchmark-2 explicitly evaluates RMSE)
+        # RMSE = sqrt(sum_sq / count) where only TRACKING/LOCKED frames are counted.
+        self._sum_sq_pixel_error: float = 0.0
+        self._rmse_count: int = 0
         # Re-acquisition tracking
         self._reacq_start: Optional[float] = None  # sim time when LOST began
         self._reacq_times: list[float] = []         # all re-acq durations
@@ -79,6 +83,9 @@ class RunMetrics:
             self._pixel_errors.append(pixel_error)
             if pixel_error > self._max_pixel_error:
                 self._max_pixel_error = pixel_error
+            # O(1) RMSE accumulation
+            self._sum_sq_pixel_error += pixel_error * pixel_error
+            self._rmse_count += 1
         if not measured:
             self._missed_measurement_frames += 1
         self._confidences.append(confidence)
@@ -114,6 +121,18 @@ class RunMetrics:
             return (None, None)
         return (sum(errs) / len(errs), self._max_pixel_error)
 
+    def rmse_px(self) -> Optional[float]:
+        """RMSE of pixel tracking error over TRACKING/LOCKED frames.
+
+        PS169 Benchmark-2 evaluates RMSE explicitly. This is O(1) —
+        computed from running sum-of-squares, never from stored history.
+        Returns None if fewer than 2 qualifying frames have been seen.
+        """
+        if self._rmse_count < 2:
+            return None
+        import math
+        return math.sqrt(self._sum_sq_pixel_error / self._rmse_count)
+
     def _loss_pct(self) -> float:
         if self._total_frames == 0:
             return 0.0
@@ -132,6 +151,7 @@ class RunMetrics:
         fps = self.current_fps()
         acq = self._acquisition_time
         has_px = avg_px is not None and max_px is not None
+        rmse = self.rmse_px()
         return {
             'acquisition_s': {
                 'value': round(acq, 3) if acq is not None else None,
@@ -144,6 +164,10 @@ class RunMetrics:
             'max_error_px': {
                 'value': round(max_px, 2) if max_px is not None else None,
                 'pass': bool(has_px) and max_px <= PS169['tracking_err_px'],
+            },
+            'rmse_px': {
+                'value': round(rmse, 2) if rmse is not None else None,
+                'pass': rmse is None or rmse <= PS169['tracking_err_px'],
             },
             'target_loss_pct': {
                 'value': round(loss, 2),
@@ -195,6 +219,8 @@ class RunMetrics:
             'max_error': round(max_err, 4),
             'average_error_px': round(avg_px, 3) if avg_px is not None else None,
             'max_error_px': round(max_px, 3) if max_px is not None else None,
+            'rmse_px': (round(self.rmse_px(), 3)
+                        if self.rmse_px() is not None else None),
             'target_loss_pct': round(self._loss_pct(), 2),
             'lock_retention': round(lock_ret, 2),
             'avg_processing_ms': round(avg_proc, 2),
@@ -227,6 +253,8 @@ class RunMetrics:
             'max_error': round(self._max_angular_error, 4),
             'average_error_px': round(avg_px, 3) if avg_px is not None else None,
             'max_error_px': round(self._max_pixel_error, 3) if self._pixel_errors else None,
+            'rmse_px': (round(self.rmse_px(), 3)
+                        if self.rmse_px() is not None else None),
             'target_loss_pct': round(self._loss_pct(), 2),
             'avg_reacquisition_time': (
                 round(self._avg_reacq(), 3) if self._avg_reacq() is not None else None),

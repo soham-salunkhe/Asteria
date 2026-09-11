@@ -59,7 +59,7 @@ const TEST_PRESETS: { name: string; patch: Partial<TargetForm> }[] = [
 const ENVIRONMENTS = ['urban', 'open_sky', 'mountain', 'uav', 'satellite'] as const;
 const TRAJECTORIES = ['sinusoidal', 'circular', 'linear', 'random_walk', 'figure_8'] as const;
 const ATMOS_MODES  = ['clear', 'haze', 'fog', 'rain', 'low_light'] as const;
-const PLATFORM_MOTIONS = ['stationary', 'uav_hover', 'orbital', 'circular_patrol'] as const;
+const PLATFORM_MOTIONS = ['stationary', 'linear', 'uav_hover', 'orbital', 'circular_patrol'] as const;
 type AtmosMode = typeof ATMOS_MODES[number];
 type PlatformMotion = typeof PLATFORM_MOTIONS[number];
 
@@ -358,6 +358,7 @@ export function MissionControlPage() {
                     onClick={() => setPlatformMotion(pm)}
                   >
                     {pm === 'stationary' ? 'STATIONARY'
+                      : pm === 'linear' ? 'LINEAR (PS169 MANDATORY)'
                       : pm === 'uav_hover' ? 'UAV HOVER/SWAY'
                       : pm === 'orbital' ? 'LEO SATELLITE'
                       : 'CIRCULAR PATROL'}
@@ -523,6 +524,8 @@ export function MissionControlPage() {
             <Metric label="ACQUISITION"  value={met?.acquisition_time != null ? `${met.acquisition_time.toFixed(2)} s` : '—'} ok={met?.acquisition_time != null} />
             <Metric label="AVG ERROR"    value={met?.average_error != null ? `${met.average_error.toFixed(3)}°` : '—'} />
             <Metric label="MAX ERROR"    value={met?.max_error != null ? `${met.max_error.toFixed(3)}°` : '—'} warn={(met?.max_error ?? 0) > 3} />
+            <Metric label="AVG ERR PX"   value={met?.average_error_px != null ? `${met.average_error_px.toFixed(2)} px` : '—'} />
+            <Metric label="RMSE PX"      value={met?.rmse_px != null ? `${met.rmse_px.toFixed(2)} px` : '—'} ok={(met?.rmse_px ?? 99) <= 10} />
             <Metric label="LOCK RET."    value={met?.lock_retention != null ? `${met.lock_retention.toFixed(1)}%` : '—'} ok={(met?.lock_retention ?? 0) > 95} />
             <Metric label="FPS"          value={met?.fps != null ? met.fps.toFixed(1) : '—'} />
             <Metric label="LATENCY"      value={met?.processing_ms != null ? `${met.processing_ms.toFixed(1)} ms` : '—'} />

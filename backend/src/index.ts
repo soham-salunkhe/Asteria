@@ -1,5 +1,5 @@
 /**
- * FSOC Virtual PAT — Node.js Backend
+ * ASTERIA — Node.js Backend
  * Sole responsibility: Gemini Engineering Copilot proxy.
  *
  * All simulation, tracking, WebSocket, and database operations
@@ -33,12 +33,12 @@ app.use('/api/guide', guideRouter);
 app.get('/api/health', (_req, res) => {
   res.json({
     status:    'healthy',
-    service:   'fsoc-pat-node-backend',
+    service:   'asteria-node-backend',
     version:   '1.0.0',
     timestamp: new Date().toISOString(),
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 FSOC PAT Node Backend running on http://localhost:${PORT}`);
+  console.log(`🚀 ASTERIA Node Backend running on http://localhost:${PORT}`);
 });

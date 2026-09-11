@@ -218,7 +218,7 @@ function SceneLights({ brightness }: { brightness: number }) {
 function StarField({ visible }: { visible: boolean }) {
   const points = useMemo(() => {
     const values: number[] = [];
-    const N = 520;
+    const N = 320;
     for (let i = 0; i < N; i += 1) {
       const phi = Math.acos(1 - 2 * ((i + 0.5) / N));
       const theta = Math.PI * (1 + Math.sqrt(5)) * i;
@@ -237,7 +237,7 @@ function StarField({ visible }: { visible: boolean }) {
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[points, 3]} />
       </bufferGeometry>
-      <pointsMaterial color="#d4e2e4" size={0.045} sizeAttenuation transparent opacity={0.7} depthWrite={false} />
+      <pointsMaterial color="#d4e2e4" size={0.04} sizeAttenuation transparent opacity={0.55} depthWrite={false} />
     </points>
   );
 }
@@ -496,10 +496,15 @@ function Beacon({ color = '#bfe6ff', scale = 1 }: { color?: string; scale?: numb
 }
 
 // ── Virtual FSOC camera rig — orientation ONLY from telemetry ────
+// beaconWorldPos: world-space position of the CURRENTLY TRACKED beacon.
+//   - For the live backend target this is targetPosition + local beacon offset.
+//   - For a user-added target this is reported each frame by LocalObject.reportPosition(beaconId).
+// SAT-01 does NOT move — only the rig's pan/tilt rotation changes.
 function VirtualFsocRig({
   frame,
   liveId,
   targetPosition,
+  beaconWorldPos,
   showFov,
   showLabels,
   reportPosition,
@@ -507,14 +512,15 @@ function VirtualFsocRig({
   frame: TelemetryFrame | null;
   liveId: string;
   targetPosition: V3;
+  beaconWorldPos: V3;   // world position of the ACTIVE beacon (drives FOV line-of-sight)
   showFov: boolean;
   showLabels: boolean;
   reportPosition: (id: string, p: V3) => void;
 }) {
   const pan = frame?.camera.pan ?? 0;
   const tilt = frame?.camera.tilt ?? 0;
-  const fovH = frame?.camera.fov_h ?? 28;
-  const fovV = frame?.camera.fov_v ?? 21;
+  const fovH = frame?.camera.fov_h ?? 4;
+  const fovV = frame?.camera.fov_v ?? 3;
   const state = frame?.target_state ?? 'READY';
   const linkActive = state === 'ACQUIRING' || state === 'TRACKING' || state === 'LOCKED' || state === 'REACQUIRING';
 
@@ -529,27 +535,28 @@ function VirtualFsocRig({
   });
 
   useEffect(() => {
+    // Report the live target position so NavRig FOLLOW/FOCUS can track it.
     reportPosition(liveId, targetPosition);
   }, [targetPosition, reportPosition, liveId]);
 
   const halfH = THREE.MathUtils.degToRad(fovH / 2);
   const halfV = THREE.MathUtils.degToRad(fovV / 2);
-  // Narrow PS169 FOV (4°x3°) renders as a thin spike — length keeps it readable
+  // PS169 narrow FOV (4°×3°). Length chosen so the frustum is visible in the scene.
   const length = 4.0;
   const hx = Math.tan(halfH) * length;
   const hy = Math.tan(halfV) * length;
   const corners: V3[] = [
-    [hx, hy, -length],
-    [-hx, hy, -length],
+    [ hx,  hy, -length],
+    [-hx,  hy, -length],
     [-hx, -hy, -length],
-    [hx, -hy, -length],
+    [ hx, -hy, -length],
   ];
 
-  // translucent frustum volume (4 side faces, apex at the aperture)
+  // Translucent frustum volume — 4 triangular side faces.
   const frustumGeo = useMemo(() => {
-    const apex: V3 = [0, 0.22, 0];
+    const apex: V3 = [0, 0, 0]; // apex is at the camera aperture (after the rig offset)
     const verts: number[] = [];
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 4; i++) {
       const a = corners[i];
       const b = corners[(i + 1) % 4];
       verts.push(...apex, ...a, ...b);
@@ -562,18 +569,23 @@ function VirtualFsocRig({
   }, [fovH, fovV]);
 
   const linkColor = state === 'LOCKED' ? '#8fe0b4' : state === 'TRACKING' ? '#a9d3b8' : '#d9b06a';
-  // Point optical link directly to the tracked beacon at [0, 0.62, 0] offset on host platform
+
+  // Line-of-sight from FSOC aperture to active beacon — expressed in SAT_A_POSITION's
+  // local frame (all coordinates relative to SAT_A_POSITION because the parent
+  // <group> is positioned at SAT_A_POSITION).
+  const fsocAperture: V3 = [0, 0.22, 0]; // aperture position in SAT-01's local frame
   const toBeacon: V3 = [
-    targetPosition[0] - SAT_A_POSITION[0],
-    targetPosition[1] + 0.62 - SAT_A_POSITION[1],
-    targetPosition[2] - SAT_A_POSITION[2],
+    beaconWorldPos[0] - SAT_A_POSITION[0],
+    beaconWorldPos[1] - SAT_A_POSITION[1],
+    beaconWorldPos[2] - SAT_A_POSITION[2],
   ];
 
   return (
     <group position={SAT_A_POSITION}>
-      {/* virtual tracking camera body — sits on the terminal, yaws/pitches with pan/tilt */}
-      <group ref={rigRef} position={[0, 0.22, 0]}>
-        <mesh rotation={[0, 0, 0]}>
+      {/* Virtual tracking camera body — rotates with telemetry pan/tilt.
+          SAT-01 itself is stationary; only rigRef rotates. */}
+      <group ref={rigRef} position={fsocAperture}>
+        <mesh>
           <boxGeometry args={[0.16, 0.1, 0.22]} />
           <meshStandardMaterial color="#5a6666" metalness={0.8} roughness={0.3} />
         </mesh>
@@ -581,6 +593,7 @@ function VirtualFsocRig({
           <cylinderGeometry args={[0.055, 0.065, 0.1, 20]} />
           <meshStandardMaterial color="#2c3a40" metalness={0.85} roughness={0.22} />
         </mesh>
+        {/* Lens aperture disc */}
         <mesh position={[0, 0, -0.205]} rotation={[Math.PI / 2, 0, 0]}>
           <cylinderGeometry args={[0.042, 0.042, 0.012, 20]} />
           <meshBasicMaterial color="#9fd8e8" transparent opacity={0.9} toneMapped={false} />
@@ -594,21 +607,27 @@ function VirtualFsocRig({
               <Line key={i} points={[[0, 0, 0], c]} color="#7fc4d4" lineWidth={0.7} transparent opacity={0.55} />
             ))}
             <Line points={[...corners, corners[0]]} color="#8fd2e2" lineWidth={0.9} transparent opacity={0.75} />
-            {/* far-plane tint — very light so the covered region reads clearly */}
+            {/* Far-plane tint */}
             <mesh position={[0, 0, -length]}>
               <planeGeometry args={[hx * 2, hy * 2]} />
               <meshBasicMaterial color="#69b7c9" transparent opacity={0.05} side={THREE.DoubleSide} depthWrite={false} />
             </mesh>
-            {/* boresight */}
+            {/* Boresight */}
             <Line points={[[0, 0, 0], [0, 0, -length * 0.92]]} color="#e08a7a" lineWidth={0.8} transparent opacity={0.65} dashed dashSize={0.08} gapSize={0.06} />
           </group>
         )}
       </group>
       {showLabels && <ObjLabel text="FSOC-CAM-01" color="#9fd8e8" offset={0.62} />}
-      {/* line of sight to the live beacon */}
-      <Line points={[[0, 0.22, 0], toBeacon]} color="#7fa895" lineWidth={0.5} transparent opacity={0.4} dashed dashSize={0.05} gapSize={0.05} />
-      {linkActive && showFov && (
-        <Line points={[[0, 0.22, 0], toBeacon]} color={linkColor} lineWidth={state === 'LOCKED' ? 1 : 0.6} transparent opacity={state === 'LOCKED' ? 0.8 : 0.45} />
+      {/* Dashed line-of-sight from FSOC aperture to active beacon */}
+      <Line points={[fsocAperture, toBeacon]} color="#7fa895" lineWidth={0.5} transparent opacity={0.4} dashed dashSize={0.05} gapSize={0.05} />
+      {linkActive && (
+        <Line
+          points={[fsocAperture, toBeacon]}
+          color={linkColor}
+          lineWidth={state === 'LOCKED' ? 1 : 0.6}
+          transparent
+          opacity={state === 'LOCKED' ? 0.8 : 0.45}
+        />
       )}
     </group>
   );
@@ -630,6 +649,13 @@ function TrajectoryLine({ history, visible }: { history: TelemetryFrame[]; visib
   if (!visible || points.length < 2) return null;
   return <Line points={points} color="#8ba79e" lineWidth={0.55} transparent opacity={0.5} />;
 }
+
+// ── Beacon local offset on a target terminal (in Three.js world units) ──
+// The beacon is mounted on top of the target body.
+// BEACON_LOCAL_OFFSET is expressed in the target's local frame.
+// When the target moves or rotates, the beacon inherits both transforms
+// automatically because it is a child of the same groupRef.
+const BEACON_LOCAL_OFFSET: V3 = [0, 0.62, 0];
 
 // ── Interactive local object (visualisation-only extra) ──────────
 function LocalObject({
@@ -657,7 +683,12 @@ function LocalObject({
   reportPosition: (id: string, p: V3) => void;
   reportVelocity: (id: string, v: V3) => void;
 }) {
+  // groupRef is attached directly to the single root group.
+  // Both the satellite mesh AND the beacon are children of this group,
+  // so the beacon is always at BEACON_LOCAL_OFFSET relative to the target —
+  // it never drifts away regardless of motion mode or user drag.
   const groupRef = useRef<THREE.Group>(null!);
+  const beaconRef = useRef<THREE.Group>(null!);
   const baseRef = useRef<V3>([...def.base] as V3);
   const draggingRef = useRef(false);
 
@@ -669,23 +700,44 @@ function LocalObject({
     const g = groupRef.current;
     if (!g) return;
     if (draggingRef.current) {
+      // While dragging, report the current world position (TransformControls
+      // is moving groupRef directly, so g.position is already up-to-date).
       reportPosition(def.id, [g.position.x, g.position.y, g.position.z]);
+      // Also report beacon world position so VirtualFsocRig can point at it.
+      if (beaconRef.current && def.kind === 'target') {
+        const bw = new THREE.Vector3();
+        beaconRef.current.getWorldPosition(bw);
+        reportPosition(def.beaconId, [bw.x, bw.y, bw.z]);
+      }
       return;
     }
-    // wall-clock seconds — same basis as def.spawnedAt
+    // Wall-clock seconds — same basis as def.spawnedAt.
     const t = performance.now() / 1000;
     const off = motionOffset(def, t);
-    g.position.set(baseRef.current[0] + off[0], baseRef.current[1] + off[1], baseRef.current[2] + off[2]);
+    g.position.set(
+      baseRef.current[0] + off[0],
+      baseRef.current[1] + off[1],
+      baseRef.current[2] + off[2],
+    );
     g.rotation.set(def.rotation[0], def.rotation[1], def.rotation[2]);
     reportPosition(def.id, [g.position.x, g.position.y, g.position.z]);
     reportVelocity(def.id, motionVelocity(def, t));
+    // Report beacon world position so VirtualFsocRig can point at the right beacon.
+    if (beaconRef.current && def.kind === 'target') {
+      const bw = new THREE.Vector3();
+      beaconRef.current.getWorldPosition(bw);
+      reportPosition(def.beaconId, [bw.x, bw.y, bw.z]);
+    }
   });
 
   const isTarget = def.kind === 'target';
   const accent = isTarget ? '#e0a44a' : '#73c8bd';
 
   return (
-    <group>
+    <>
+      {/* Single root group — groupRef drives BOTH the satellite mesh and beacon.
+          The beacon is a child, so it always inherits the target's world transform.
+          beaconWorldPos = targetWorldPos + targetRotation * BEACON_LOCAL_OFFSET */}
       <group
         ref={groupRef}
         position={def.base}
@@ -697,7 +749,7 @@ function LocalObject({
       >
         <SatelliteMesh target={isTarget} accent={selected ? '#ffffff' : accent} />
         {isTarget && showBeacon && (
-          <group position={[0, 0.62, 0]}>
+          <group ref={beaconRef} position={BEACON_LOCAL_OFFSET}>
             <Beacon color="#ffd9a0" scale={0.85} />
           </group>
         )}
@@ -736,71 +788,159 @@ function LocalObject({
           }}
         />
       )}
-    </group>
+    </>
   );
 }
 
-// ── Operator view presets + follow (never touches pan/tilt) ─────
+// ── Camera ownership state machine ────────────────────────────────
+// FREE: OrbitControls owns the visualization camera.
+// FOCUSING: a one-time focus animation owns it; on completion → FREE.
+// FOLLOWING ('follow'): continuous follow owns it; toggle off → FREE.
+type CameraMode = 'free' | 'focusing' | 'follow';
+
 interface ViewRequest {
   name: 'iso' | 'top' | 'front' | 'side' | 'reset' | 'target' | 'camera';
   k: number;
 }
 
+// ── Operator view presets + follow (never touches pan/tilt) ─────
 function NavRig({
   viewReq,
-  followOn,
+  cameraMode,
+  setCameraMode,
   followId,
   positionsRef,
   fallback,
   orbitEnabled,
 }: {
   viewReq: ViewRequest | null;
-  followOn: boolean;
+  cameraMode: CameraMode;
+  setCameraMode: (mode: CameraMode) => void;
   followId: string | null;
   positionsRef: React.MutableRefObject<Map<string, V3>>;
   fallback: V3;
   orbitEnabled: boolean;
 }) {
-  const { camera, controls } = useThree() as unknown as { camera: THREE.Camera; controls: { target: THREE.Vector3; update: () => void } | null };
+  const { camera, controls } = useThree() as unknown as { camera: THREE.Camera; controls: { target: THREE.Vector3; update: () => void; enabled: boolean } | null };
   const tmp = useMemo(() => new THREE.Vector3(), []);
 
+  // Transition state: store FROM and TO separately so lerp is correct.
+  // fromPos/fromTarget = position at the moment the transition starts.
+  // toPos/toTarget     = destination position/lookAt.
+  const fromPos    = useMemo(() => new THREE.Vector3(), []);
+  const toPos      = useMemo(() => new THREE.Vector3(), []);
+  const fromTarget = useMemo(() => new THREE.Vector3(), []);
+  const toTarget   = useMemo(() => new THREE.Vector3(), []);
+  const transitionStart = useRef(0);
+  const isTransitioning = useRef(false);
+
+  // Latest per-render values, mirrored into refs so the one-shot effect
+  // below does NOT need them in its dependency array. Including `fallback`
+  // (a fresh array every telemetry frame) or `followId` in deps would
+  // re-fire this effect ~30×/sec and permanently hijack the camera.
+  const followIdRef = useRef(followId);
+  followIdRef.current = followId;
+  const fallbackRef = useRef(fallback);
+  fallbackRef.current = fallback;
+  const cameraModeRef = useRef(cameraMode);
+  cameraModeRef.current = cameraMode;
+
+  // Handle view requests — fires ONCE per request (viewReq object identity),
+  // stores FROM/TO, starts timer. Never modifies camera.position here;
+  // that is done exclusively in useFrame.
   useEffect(() => {
     if (!viewReq || !controls) return;
-    const tgt = new THREE.Vector3(0, 0, -0.55);
-    if (viewReq.name === 'target') {
-      const p = (followId && positionsRef.current.get(followId)) || fallback;
-      tgt.set(p[0], p[1] + 0.3, p[2]);
-      camera.position.set(p[0] + 1.8, p[1] + 1.2, p[2] + 2.5);
-    } else if (viewReq.name === 'camera') {
-      tgt.set(SAT_A_POSITION[0], SAT_A_POSITION[1] + 0.22, SAT_A_POSITION[2]);
-      camera.position.set(SAT_A_POSITION[0] + 1.4, SAT_A_POSITION[1] + 0.8, SAT_A_POSITION[2] + 2.0);
-    } else {
-      const pos: V3 =
-        viewReq.name === 'top'
-          ? [0.01, 9.5, -0.54]
-          : viewReq.name === 'front'
-            ? [0, 0.7, 7.6]
-            : viewReq.name === 'side'
-              ? [7.6, 0.9, -0.55]
-              : [4.8, 2.8, 7.4];
-      camera.position.set(...pos);
-    }
-    controls.target.copy(tgt);
-    controls.update();
-  }, [viewReq, camera, controls, followId, positionsRef, fallback]);
 
+    // Any preset cancels follow; the transition owns the camera while running
+    setCameraMode('focusing');
+
+    // Snapshot current visualization camera state as FROM
+    fromPos.copy(camera.position);
+    fromTarget.copy(controls.target);
+
+    // Compute destination TO (reads latest values via refs)
+    const dest = new THREE.Vector3(0, 0, -0.55); // default lookAt
+    let destCamPos: V3;
+    const fid = followIdRef.current;
+    const fb = fallbackRef.current;
+
+    if (viewReq.name === 'target') {
+      const p = (fid && positionsRef.current.get(fid)) || fb;
+      dest.set(p[0], p[1] + 0.3, p[2]);
+      destCamPos = [p[0] + 1.8, p[1] + 1.2, p[2] + 2.5];
+    } else if (viewReq.name === 'camera') {
+      dest.set(SAT_A_POSITION[0], SAT_A_POSITION[1] + 0.22, SAT_A_POSITION[2]);
+      destCamPos = [SAT_A_POSITION[0] + 1.4, SAT_A_POSITION[1] + 0.8, SAT_A_POSITION[2] + 2.0];
+    } else if (viewReq.name === 'reset') {
+      dest.set(0, 0, -0.55);
+      destCamPos = [4.8, 2.8, 7.4];
+    } else {
+      destCamPos =
+        viewReq.name === 'top'   ? [0.01, 9.5, -0.54]
+        : viewReq.name === 'front' ? [0, 0.7, 7.6]
+        : viewReq.name === 'side'  ? [7.6, 0.9, -0.55]
+        : [4.8, 2.8, 7.4]; // iso/full
+    }
+
+    toPos.set(...destCamPos);
+    toTarget.copy(dest);
+
+    // Kick off timed interpolation in useFrame
+    transitionStart.current = performance.now() / 1000;
+    isTransitioning.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewReq]);
+
+  // FOLLOW — continuous, lerps the OrbitControls look-at toward the tracked object.
+  // Only active when cameraMode === 'follow'. Does NOT move camera.position.
   useFrame(() => {
-    if (!followOn || !controls) return;
+    if (cameraMode !== 'follow' || !controls) return;
     const p = (followId && positionsRef.current.get(followId)) || fallback;
     tmp.set(p[0], p[1], p[2]);
-    controls.target.lerp(tmp, 0.08);
+    controls.target.lerp(tmp, 0.06);
     controls.update();
   });
+
+  // FOCUS transition — runs for exactly `duration` seconds after a view request,
+  // then stops. Lerps FROM→TO, never writes outside this window.
+  useFrame(() => {
+    if (!isTransitioning.current || !controls) return;
+
+    const elapsed = performance.now() / 1000 - transitionStart.current;
+    const duration = 0.65;
+
+    if (elapsed >= duration) {
+      // Snap to exact destination, stop, return ownership to OrbitControls
+      camera.position.copy(toPos);
+      controls.target.copy(toTarget);
+      controls.update();
+      isTransitioning.current = false;
+      setCameraMode('free'); // FOCUSING → FREE
+      return;
+    }
+
+    // Ease-out cubic: fast start, smooth finish
+    const t = elapsed / duration;
+    const ease = 1 - Math.pow(1 - t, 3);
+
+    camera.position.lerpVectors(fromPos, toPos, ease);
+    controls.target.lerpVectors(fromTarget, toTarget, ease);
+    controls.update();
+  });
+
+  // Keep OrbitControls.enabled in sync with camera mode.
+  // FOLLOW and FOCUSING own the camera; OrbitControls owns it in FREE.
+  const orbitActive = orbitEnabled && cameraMode === 'free';
+  useEffect(() => {
+    if (controls) {
+      controls.enabled = orbitActive;
+    }
+  }, [controls, orbitActive]);
 
   return (
     <OrbitControls
       makeDefault
-      enabled={orbitEnabled}
+      enabled={orbitActive}
       enableDamping
       dampingFactor={0.075}
       minDistance={1.2}
@@ -819,7 +959,8 @@ function SceneContent(props: {
   selectedId: string | null;
   gizmoMode: 'translate' | 'rotate' | null;
   viewReq: ViewRequest | null;
-  followOn: boolean;
+  cameraMode: CameraMode;
+  setCameraMode: (mode: CameraMode) => void;
   orbitEnabled: boolean;
   positionsRef: React.MutableRefObject<Map<string, V3>>;
   velocitiesRef: React.MutableRefObject<Map<string, V3>>;
@@ -852,14 +993,31 @@ function SceneContent(props: {
 
   const liveId = frame?.target.id ?? 'BEACON-01';
 
+  // Beacon for the live backend target is at BEACON_LOCAL_OFFSET above the target terminal.
+  const liveBeaconWorldPos: V3 = [
+    targetPosition[0] + BEACON_LOCAL_OFFSET[0],
+    targetPosition[1] + BEACON_LOCAL_OFFSET[1],
+    targetPosition[2] + BEACON_LOCAL_OFFSET[2],
+  ];
+
+  // Determine which beacon the FSOC camera currently points at.
+  // If a user-added target is being tracked (trackingState !== 'IDLE'),
+  // use its beaconId position reported by LocalObject; otherwise use the live beacon.
+  const trackedLocalTarget = props.objects.find(
+    (o) => o.kind === 'target' && o.trackingState !== 'IDLE',
+  );
+  const activeBeaconPos: V3 =
+    (trackedLocalTarget && props.positionsRef.current.get(trackedLocalTarget.beaconId))
+    ?? liveBeaconWorldPos;
+
   return (
     <>
       <color attach="background" args={[SCENE_BG]} />
       <fog attach="fog" args={[SCENE_BG, 13, 38]} />
       <SceneLights brightness={settings.brightness} />
       <StarField visible={settings.stars} />
-      {/* faint reference grid — gives depth without lighting up the scene */}
-      <gridHelper args={[30, 30, '#2a4258', '#182635']} position={[0, -2.4, 0]} />
+      {/* subtle spatial reference — kept minimal so the scene reads as space, not CAD */}
+      <gridHelper args={[24, 24, '#1b2c3e', '#101a26']} position={[0, -2.6, 0]} />
       <Earth brightness={settings.brightness} />
 
       {/* FSOC terminal satellite (host of the virtual camera) */}
@@ -890,7 +1048,9 @@ function SceneContent(props: {
         }}
       >
         <SatelliteMesh target accent={selectedId === liveId ? '#ffffff' : undefined} />
-        <group position={[0, 0.62, 0]}>
+        {/* Beacon is a child of the target group at BEACON_LOCAL_OFFSET —
+            same offset used by LocalObject and VirtualFsocRig. */}
+        <group position={BEACON_LOCAL_OFFSET}>
           <Beacon color={state === 'LOCKED' ? '#c4ffd9' : '#bfe0ff'} scale={1} />
         </group>
         {settings.labels && (
@@ -913,6 +1073,7 @@ function SceneContent(props: {
         frame={frame}
         liveId={liveId}
         targetPosition={targetPosition}
+        beaconWorldPos={activeBeaconPos}
         showFov={settings.fov}
         showLabels={settings.labels}
         reportPosition={reportPosition}
@@ -931,7 +1092,7 @@ function SceneContent(props: {
           return (
             <group key={t.id} position={p}>
               <SatelliteMesh target accent="#e0a44a" />
-              <group position={[0, 0.62, 0]}>
+              <group position={BEACON_LOCAL_OFFSET}>
                 <Beacon color="#ffd9a0" scale={0.8} />
               </group>
               {settings.labels && <ObjLabel text={`${t.id} [SEC]`} color="#f0c98a" />}
@@ -959,7 +1120,8 @@ function SceneContent(props: {
 
       <NavRig
         viewReq={props.viewReq}
-        followOn={props.followOn}
+        cameraMode={props.cameraMode}
+        setCameraMode={props.setCameraMode}
         followId={props.selectedId}
         positionsRef={props.positionsRef}
         fallback={targetPosition}
@@ -1040,7 +1202,7 @@ export default function Scene3D({ frame, history }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [gizmoMode, setGizmoMode] = useState<'translate' | 'rotate' | null>('translate');
   const [viewReq, setViewReq] = useState<ViewRequest | null>(null);
-  const [followOn, setFollowOn] = useState(false);
+  const [cameraMode, setCameraMode] = useState<CameraMode>('free');
   const [orbitEnabled, setOrbitEnabled] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showShift, setShowShift] = useState(false);
@@ -1058,16 +1220,42 @@ export default function Scene3D({ frame, history }: Props) {
 
   const setS = (k: keyof SceneSettings, v: number | boolean) => setSettings((p) => ({ ...p, [k]: v }));
   const requestView = (name: ViewRequest['name']) => {
-    setFollowOn(false);
+    // A new preset cancels follow; the NavRig transition owns the camera
+    // (FOCUSING) until it completes, then returns to FREE.
+    setCameraMode('free');
     setViewReq((p) => ({ name, k: (p?.k ?? 0) + 1 }));
   };
 
-  const addObject = (kind: LocalKind) => {
+  // ESC cancels any focus/follow and returns to FREE orbit control.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setViewReq(null);
+        setCameraMode('free');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const addObject = async (kind: LocalKind) => {
     if (objects.length >= 6) return;
     const now = performance.now() / 1000;
     if (kind === 'target') {
       localTargetCounter += 1;
       const n = String(localTargetCounter).padStart(2, '0');
+      // Spawn near the default target's known-good sim position (-8, 2, 350 m)
+      // so it immediately maps to a valid angular position the camera can sweep to.
+      // Each additional target is offset laterally in X (±40 m steps) and
+      // slightly in Y so they don't stack on top of each other.
+      // Three.js world = SAT_A + simPos * WORLD_SCALE
+      const offsetIdx = objects.length;  // 0-based
+      const simX = -8.0 + (offsetIdx % 3 - 1) * 40.0;   // −48, −8, +32 m
+      const simY =  2.0 + Math.floor(offsetIdx / 3) * 20.0;
+      const simZ = 350.0;
+      const baseX = SAT_A_POSITION[0] + simX * WORLD_SCALE;
+      const baseY = SAT_A_POSITION[1] + simY * WORLD_SCALE;
+      const baseZ = SAT_A_POSITION[2] + simZ * WORLD_SCALE;
       const def: SceneObjectDef = {
         id: `XTGT-${n}`,
         kind: 'target',
@@ -1076,28 +1264,44 @@ export default function Scene3D({ frame, history }: Props) {
         hostId: `SAT-${n}`,
         beaconId: `BEACON-${n}`,
         trackingState: 'IDLE',
-        base: [0.6 + objects.length * 0.7, 0.5 + (objects.length % 2) * 0.5, 1.2 - objects.length * 0.4],
+        base: [baseX, baseY, baseZ] as V3,
         rotation: [0, 0, 0],
-        motion: 'static',
+        motion: 'sinusoidal',
         ampH: 1.1,
         ampV: 0.45,
         period: 14,
         vel: [0, 0, 0],
         spawnedAt: now,
       };
+      
+      // Register with backend
+      try {
+        await fsocApi.registerTarget(def.displayLabel, {
+          x: simX,
+          y: simY,
+          z: simZ,
+          trajectory: 'sinusoidal',
+          beacon_size_px: 10.0,
+          beacon_shape: 'square',
+        });
+      } catch (e) {
+        console.error('Failed to register target with backend', e);
+      }
+      
       setObjects((p) => [...p, def]);
       setSelectedId(def.id);
       setGizmoMode('translate');
     } else {
       localSatCounter += 1;
       const n = String(localSatCounter).padStart(2, '0');
+      const cameraId = `FSOC-CAM-${n}`;
       const def: SceneObjectDef = {
         id: `XSAT-${n}`,
         kind: 'satellite',
         label: `SAT-${n}`,
         displayLabel: `SAT-${n}`,
         hostId: `SAT-${n}`,
-        beaconId: `BEACON-${n}`,
+        beaconId: cameraId,
         trackingState: 'IDLE',
         base: [0.6 + objects.length * 0.7, 0.5 + (objects.length % 2) * 0.5, 1.2 - objects.length * 0.4],
         rotation: [0, 0, 0],
@@ -1108,6 +1312,14 @@ export default function Scene3D({ frame, history }: Props) {
         vel: [0, 0, 0],
         spawnedAt: now,
       };
+      
+      // Register with backend
+      try {
+        await fsocApi.registerSatellite(def.displayLabel, cameraId);
+      } catch (e) {
+        console.error('Failed to register satellite with backend', e);
+      }
+      
       setObjects((p) => [...p, def]);
       setSelectedId(def.id);
       setGizmoMode('translate');
@@ -1180,7 +1392,12 @@ export default function Scene3D({ frame, history }: Props) {
         gl={{ antialias: true, alpha: false, logarithmicDepthBuffer: true }}
         dpr={[1, 1.5]}
         style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'block', flex: 1 }}
-        onPointerMissed={() => setSelectedId(null)}
+        onPointerMissed={() => {
+          // Don't disrupt camera mode when follow is active
+          if (cameraMode !== 'follow') {
+            setSelectedId(null);
+          }
+        }}
       >
         <ResponsiveResizer containerWidth={containerSize?.width} containerHeight={containerSize?.height} />
         <SceneContent
@@ -1191,7 +1408,8 @@ export default function Scene3D({ frame, history }: Props) {
           selectedId={selectedId}
           gizmoMode={gizmoMode}
           viewReq={viewReq}
-          followOn={followOn}
+          cameraMode={cameraMode}
+          setCameraMode={setCameraMode}
           orbitEnabled={orbitEnabled}
           positionsRef={positionsRef}
           velocitiesRef={velocitiesRef}
@@ -1204,14 +1422,11 @@ export default function Scene3D({ frame, history }: Props) {
 
       {/* ── overlay root (non-interactive except controls) ── */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: 'monospace' }}>
-        {/* top-left: identity + live link readout (proves 2D↔3D connection) */}
+        {/* top-left: minimal identity (telemetry lives in the side panel) */}
         <div style={{ position: 'absolute', top: 48, left: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ ...panel, padding: '4px 8px' }}>
+          <div style={{ ...panel, padding: '3px 8px', fontSize: 9 }}>
             <span style={{ color: '#f0b35a' }}>■ ASTERIA · 3D DIGITAL TWIN</span>
-            <span style={{ color: '#626a6d' }}> · OPERATOR VIEW</span>
-          </div>
-          <div style={{ ...panel, padding: '4px 8px', color: '#8fa9a1' }}>
-            2D↔3D LINK · PAN {pan.toFixed(2)}° · TILT {tilt.toFixed(2)}° · {tstate}
+            <span style={{ color: '#626a6d' }}> · {tstate}</span>
           </div>
         </div>
 
@@ -1244,37 +1459,42 @@ export default function Scene3D({ frame, history }: Props) {
           )}
         </div>
 
-        {/* left: navigation & view modes */}
-        <div style={{ position: 'absolute', left: 12, top: 124, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <div style={{ ...panel, padding: '3px 6px', color: '#8d9195' }}>VIEWS</div>
-          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('iso')} title="Full environment view">
-            FULL
-          </button>
-          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('target')} title="Frame target and beacon">
-            TARGET
-          </button>
-          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('camera')} title="Frame FSOC camera rig">
-            CAMERA
-          </button>
-          <div style={{ ...panel, padding: '3px 6px', color: '#8d9195', marginTop: 2 }}>ANGLES</div>
-          {(['top', 'front', 'side'] as const).map((v) => (
-            <button key={v} style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView(v)} title={`${v} view`}>
-              {v.toUpperCase()}
+        {/* left: compact view controls (one-time focus presets + follow) */}
+        <div style={{ position: 'absolute', left: 12, top: 100, display: 'flex', flexDirection: 'column', gap: 3 }} title="Drag to orbit · right-drag to pan · wheel to zoom">
+          <div style={{ ...panel, padding: '2px 6px', color: '#8d9195', fontSize: 9 }}>VIEW</div>
+          <div style={{ display: 'flex', gap: 3 }}>
+            <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('iso')} title="Full environment view">
+              FULL
             </button>
-          ))}
-          <button
-            style={{ ...chipBtn, pointerEvents: 'auto', ...(followOn ? chipOn : {}) }}
-            onClick={() => {
-              setViewReq(null);
-              setFollowOn((f) => !f);
-            }}
-            title="Follow selected / live target"
-          >
-            ◎ FOLLOW
-          </button>
-          <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => requestView('reset')} title="Reset view">
-            ⟲ RESET
-          </button>
+            <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('target')} title="One-time focus on selected target (visualization only)">
+              TARGET
+            </button>
+            <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('camera')} title="One-time focus on FSOC camera rig (visualization only)">
+              CAMERA
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 3 }}>
+            {(['top', 'front', 'side'] as const).map((v) => (
+              <button key={v} style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView(v)} title={`${v} view (one-time)`}>
+                {v.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 3 }}>
+            <button
+              style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px', ...(cameraMode === 'follow' ? chipOn : {}) }}
+              onClick={() => {
+                setViewReq(null);
+                setCameraMode((m) => m === 'follow' ? 'free' : 'follow');
+              }}
+              title="Continuous visualization follow (does not affect FSOC tracking)"
+            >
+              ◎ FOLLOW
+            </button>
+            <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('reset')} title="Reset view + free orbit (ESC works too)">
+              ⟲ RESET
+            </button>
+          </div>
         </div>
 
         {/* bottom-left: objects + gizmo */}
@@ -1439,15 +1659,40 @@ export default function Scene3D({ frame, history }: Props) {
                     setSwitching(true);
                     try {
                       const curP = positionsRef.current.get(selectedLocal.id) || selectedLocal.base;
-                      const curV = velocitiesRef.current.get(selectedLocal.id) || selectedLocal.vel;
+                      const t = performance.now() / 1000;
+                      const vel3d = motionVelocity(selectedLocal, t);
+
+                      // Convert Three.js world → simulation metres.
+                      // Z is clamped to ≥200 m so the target is deep enough
+                      // for the 4°×3° FOV to contain it at any reasonable
+                      // pan/tilt. Shallower targets subtend angles larger
+                      // than the FOV and project() returns null immediately.
                       const simX = (curP[0] - SAT_A_POSITION[0]) / WORLD_SCALE;
                       const simY = (curP[1] - SAT_A_POSITION[1]) / WORLD_SCALE;
-                      const simZ = Math.max(80, (curP[2] - SAT_A_POSITION[2]) / WORLD_SCALE);
+                      const simZ = Math.max(200, Math.abs((curP[2] - SAT_A_POSITION[2]) / WORLD_SCALE));
+
+                      // Velocity: motionVelocity gives Three.js-space units/s.
+                      // Scale by WORLD_SCALE to get m/s in sim space.
+                      const simVx = vel3d[0] / WORLD_SCALE;
+                      const simVy = vel3d[1] / WORLD_SCALE;
+
+                      // Map frontend motion names to backend trajectory names
+                      const trajMap: Record<string, string> = {
+                        static: 'static',
+                        straight: 'linear',
+                        circular: 'circular',
+                        figure8: 'figure_8',
+                        random: 'random_walk',
+                        spiral: 'sinusoidal',
+                        sinusoidal: 'sinusoidal',
+                      };
+                      const trajectory = trajMap[selectedLocal.motion] ?? 'static';
+
                       await fsocApi.switchTarget({
                         target_id: selectedLocal.displayLabel,
                         position: { x: simX, y: simY, z: simZ },
-                        velocity: { x: curV[0] / WORLD_SCALE * 0.05, y: curV[1] / WORLD_SCALE * 0.05, z: 0 },
-                        trajectory: selectedLocal.motion,
+                        velocity: { x: simVx, y: simVy, z: 0 },
+                        trajectory,
                         beacon_offset: { x: 0, y: 0, z: 0 },
                       });
                       setObjects((prev) =>
@@ -1467,21 +1712,57 @@ export default function Scene3D({ frame, history }: Props) {
               )}
 
               {isLiveBeacon && (
-                <button
-                  style={{
-                    ...chipBtn,
-                    pointerEvents: 'auto',
-                    backgroundColor: '#162832',
-                    borderColor: '#385764',
-                    color: '#8fa9a1',
-                    fontSize: 9,
-                    textAlign: 'center',
-                    cursor: 'default',
-                  }}
-                  disabled
-                >
-                  ✓ ACTIVE TRACKED TARGET
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {/* REACQUIRE — works from any state including TARGET LOST */}
+                  <button
+                    style={{
+                      ...chipBtn,
+                      pointerEvents: 'auto',
+                      backgroundColor: tstate === 'LOST' || tstate === 'REACQUIRING' ? '#2a1e10' : '#162832',
+                      borderColor: tstate === 'LOST' || tstate === 'REACQUIRING' ? '#e39a32' : '#385764',
+                      color: tstate === 'LOST' || tstate === 'REACQUIRING' ? '#f0c070' : '#8fa9a1',
+                      fontWeight: tstate === 'LOST' ? 600 : 400,
+                      fontSize: 10,
+                      textAlign: 'center',
+                      padding: '5px 8px',
+                    }}
+                    onClick={() => fsocApi.reacquire().catch(console.error)}
+                  >
+                    ⟳ REACQUIRE
+                  </button>
+                  {/* STOP TRACKING */}
+                  <button
+                    style={{
+                      ...chipBtn,
+                      pointerEvents: 'auto',
+                      backgroundColor: '#1e1212',
+                      borderColor: '#7a4040',
+                      color: '#c98a8a',
+                      fontSize: 10,
+                      textAlign: 'center',
+                      padding: '5px 8px',
+                    }}
+                    onClick={() => fsocApi.stopSimulation().catch(console.error)}
+                  >
+                    ■ STOP TRACKING
+                  </button>
+                  {/* RESET TRACKING */}
+                  <button
+                    style={{
+                      ...chipBtn,
+                      pointerEvents: 'auto',
+                      backgroundColor: '#121820',
+                      borderColor: '#4a6070',
+                      color: '#7a9ab0',
+                      fontSize: 10,
+                      textAlign: 'center',
+                      padding: '5px 8px',
+                    }}
+                    onClick={() => fsocApi.resetSimulation().catch(console.error)}
+                  >
+                    ↺ RESET TRACKING
+                  </button>
+                </div>
               )}
 
               <button
@@ -1567,15 +1848,14 @@ export default function Scene3D({ frame, history }: Props) {
           </div>
         )}
 
-        {/* bottom-right: legend + controls hint */}
+        {/* bottom-right: subtle legend only (interaction hint lives in VIEW tooltip) */}
         <div style={{ position: 'absolute', right: 8, bottom: 8, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-          <div style={{ ...panel, padding: '4px 8px', display: 'flex', gap: 8 }}>
+          <div style={{ ...panel, padding: '3px 8px', display: 'flex', gap: 8, fontSize: 9, opacity: 0.85 }}>
             <span><span style={{ color: '#dff2ff' }}>●</span> BEACON</span>
-            <span><span style={{ color: '#7fc4d4' }}>◈</span> FOV</span>
+            <span><span style={{ color: '#7fc4d4' }}>◆</span> FOV</span>
             <span><span style={{ color: '#8ba79e' }}>─</span> TRAJ</span>
             <span><span style={{ color: '#8fe0b4' }}>─</span> LINK</span>
           </div>
-          <div style={{ ...panel, padding: '3px 8px', color: '#626a6d', fontSize: 9 }}>DRAG ORBIT · R-DRAG PAN · WHEEL ZOOM</div>
         </div>
       </div>
     </div>

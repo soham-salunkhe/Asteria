@@ -46,6 +46,12 @@ export const fsocApi = {
   updatePID: (config: unknown) =>
     post('/api/simulation/pid', config),
 
+  updateKalman: (config: unknown) =>
+    post('/api/simulation/kalman', config),
+
+  setAtmosphere: (mode: string, strength: number) =>
+    post<{ success: boolean; mode: string; strength: number }>('/api/simulation/atmosphere', { mode, strength }),
+
   updateCamera: (pan: number, tilt: number) =>
     post('/api/simulation/camera', { pan, tilt }),
 
@@ -61,6 +67,23 @@ export const fsocApi = {
     trajectory?: string;
     beacon_offset?: { x: number; y: number; z: number };
   }) => post<{ success: boolean; target_id: string }>('/api/simulation/switch_target', data),
+
+  // Force reacquisition for the current target from any state (including LOST)
+  reacquire: () =>
+    post<{ success: boolean; target_id: string }>('/api/simulation/reacquire'),
+
+  // Entity registration
+  registerTarget: (targetId: string, config?: unknown) =>
+    post<{ success: boolean; target_id: string; beacon_id: string }>('/api/simulation/register_target', { target_id: targetId, config }),
+
+  registerCamera: (cameraId: string, config?: unknown) =>
+    post<{ success: boolean; camera_id: string }>('/api/simulation/register_camera', { camera_id: cameraId, config }),
+
+  registerSatellite: (satelliteId: string, cameraId: string) =>
+    post<{ success: boolean; satellite_id: string; camera_id: string }>('/api/simulation/register_satellite', { satellite_id: satelliteId, camera_id: cameraId }),
+
+  getEntityRegistry: () =>
+    get<{ targets: string[]; cameras: string[]; satellites: string[]; active_target: string | null; active_camera: string | null }>('/api/simulation/entity_registry'),
 
   // Scenarios
   createScenario: (data: unknown) => post('/api/scenarios', data),

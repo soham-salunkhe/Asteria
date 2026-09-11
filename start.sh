@@ -1,8 +1,8 @@
 #!/bin/bash
-# YatraAI Multi-Service Launcher
+# ASTERIA Multi-Service Launcher
 
-echo "🧭 Starting YatraAI Tourism Intelligence Platform..."
-echo "=================================================="
+echo "🛰️  Starting ASTERIA — AI-Based Virtual Camera Tracking..."
+echo "=========================================================="
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -27,9 +27,9 @@ FRONTEND_PID=$!
 trap "echo 'Stopping all services...'; kill $AI_PID $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" INT TERM
 
 echo ""
-echo "✨ YatraAI is live!"
+echo "✨ ASTERIA is live!"
 echo "👉 Frontend App:       http://localhost:5173"
-echo "👉 Backend API:        http://localhost:5001/api/destinations"
+echo "👉 Backend API:        http://localhost:5001"
 echo "👉 AI Engine Docs:     http://localhost:8000/docs"
 echo ""
 

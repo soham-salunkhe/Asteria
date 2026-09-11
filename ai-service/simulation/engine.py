@@ -26,6 +26,16 @@ from typing import Optional, Callable, Awaitable
 # Thread pool for offloading blocking I/O (SQLite writes) off the event loop
 _DB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='fsoc-db')
 
+# Import authoritative PS169 tracking thresholds — shared with VideoProcessor
+from tracking_constants import (
+    TARGET_LOCK_THRESHOLD_PX as _TLT_PX,
+    TARGET_UNLOCK_PX as _TUL_PX,
+    LOCK_FRAMES_REQUIRED as _LFR,
+    ACQUIRING_THRESHOLD_PX as _ACQ_PX,
+    LOST_GRACE_SECONDS as _LGS,
+    REACQUIRE_TIMEOUT_SECONDS as _RTS,
+)
+
 from simulation.environment import get_environment, EnvironmentType
 from simulation.target import Target, TargetConfig, Vec3
 from simulation.camera import Camera, CameraConfig
@@ -91,20 +101,30 @@ class SimulationEngine:
     Creates one asyncio task per run; results are streamed via callback.
     """
 
-    TARGET_LOCK_THRESHOLD_PX = 10.0  # PS169: Tracking error ≤ 10 pixels
-    TARGET_UNLOCK_PX = 15.0
-    LOCK_FRAMES_REQUIRED = 15        # stable frames before LOCKED
-    SEARCH_SWEEP_AMP = 20.0          # degrees, SEARCHING sweep amplitude
-    SEARCH_SWEEP_RATE = 0.25         # rad/s — peak rate stays ≤ 5°/s
+    TARGET_LOCK_THRESHOLD_PX = _TLT_PX   # PS169: Tracking error ≤ 10 pixels
+    TARGET_UNLOCK_PX = _TUL_PX
+    LOCK_FRAMES_REQUIRED = _LFR          # stable frames before LOCKED
+    ACQUIRING_THRESHOLD_PX = _ACQ_PX     # pixels — DETECTED→ACQUIRING boundary
+    # Widened sweep so targets placed anywhere in ±60° are reachable
+    SEARCH_SWEEP_AMP = 60.0              # degrees, SEARCHING sweep amplitude
+    SEARCH_SWEEP_RATE = 0.18             # rad/s — covers full arc in ~5 s
+    LOST_GRACE_SECONDS = _LGS
+    REACQUIRE_TIMEOUT_SECONDS = _RTS
 
     def __init__(self):
         self._running = False
         self._paused = False
+        self._stopped = False  # Explicit stopped state
         self._task: Optional[asyncio.Task] = None
         self._run_id: Optional[str] = None
+        self._run_counter = 0  # Incremented on each new run for stale callback detection
 
         # Components
         self._env_type: EnvironmentType = 'urban'
+        # Atmospheric optical path (haze/fog/rain/low_light) applied to the
+        # actual NumPy detection frame in FrameRenderer — never frontend-only.
+        self._atmos_mode: str = 'clear'
+        self._atmos_strength: float = 0.0
         self._target = Target(DEFAULT_TARGET)
         self._target_offset = Vec3(0.0, 0.0, 0.0)  # operator-injected shift (3D move)
         self._secondary_target: Optional[Target] = None
@@ -122,6 +142,15 @@ class SimulationEngine:
         self._rng = np.random.default_rng()
         self._metrics = RunMetrics()
 
+        # Entity registry for multi-target/satellite support
+        self._targets: dict[str, Target] = {}  # target_id -> Target
+        self._cameras: dict[str, Camera] = {}  # camera_id -> Camera
+        self._satellites: dict[str, dict] = {}  # satellite_id -> {camera_id, ...}
+        
+        # Register default entities
+        self._targets[DEFAULT_TARGET.id] = self._target
+        self._cameras['FSOC-CAM-01'] = self._camera
+
         # State
         self._target_state = 'READY'
         self._frame_id = 0
@@ -129,9 +158,16 @@ class SimulationEngine:
         self._missed_frames = 0
         self._lock_count = 0
         self._search_t = 0.0
+        # Expanding-sweep anchor: last-known pointing at episode start.
+        self._search_pan0 = 0.0
+        self._search_tilt0 = 0.0
         self._acq_started = False
+        self._reacquire_start_time = 0.0  # Track when REACQUIRING started
         self._events: list[dict] = []
         self._lost_frames_threshold = 30
+        # Coast horizon: ~1 s of Kalman prediction coast after a dropout
+        # before the estimate is dropped and the search sweep takes over.
+        self._coast_frames = 30
 
         # Demo-mode phase tracking
         self._demo_mode = False
@@ -146,6 +182,104 @@ class SimulationEngine:
     def set_broadcast(self, fn: Callable[[dict], Awaitable[None]]) -> None:
         self._broadcast = fn
 
+    def register_target(self, target_id: str, config: Optional[dict] = None) -> dict:
+        """Register a new target with the backend engine.
+        Returns the target configuration including beacon association.
+        """
+        if target_id in self._targets:
+            return {'success': False, 'error': f'Target {target_id} already exists'}
+        
+        # Create target with provided or default config
+        tc = config or {}
+        bo = tc.get('beacon_offset', {'x': 0, 'y': 0, 'z': 0})
+        if tc.get('random_init'):
+            from simulation.target import random_initial_position
+            _rp = random_initial_position(tc.get('seed')).as_dict()
+            init_xyz = (_rp['x'], _rp['y'], _rp['z'])
+        else:
+            init_xyz = (float(tc.get('x', 0)), float(tc.get('y', 0)), float(tc.get('z', 350)))
+        target = Target(TargetConfig(
+            id=target_id,
+            initial_position=Vec3(*init_xyz),
+            velocity=Vec3(
+                float(tc.get('vx', 0)),
+                float(tc.get('vy', 0)),
+                float(tc.get('vz', 0))
+            ),
+            trajectory=tc.get('trajectory', 'static'),
+            intensity=float(tc.get('intensity', 0.95)),
+            beacon_size_px=float(tc.get('beacon_size_px', 10.0)),
+            beacon_shape=tc.get('beacon_shape', 'square'),
+            beacon_offset=Vec3(float(bo.get('x', 0)), float(bo.get('y', 0)), float(bo.get('z', 0))),
+            amplitude_h=float(tc.get('amplitude_h', 80.0)),
+            amplitude_v=float(tc.get('amplitude_v', 40.0)),
+            period=float(tc.get('period', 20.0)),
+        ))
+        
+        self._targets[target_id] = target
+        self._emit_event('info', f'TARGET CREATED — {target_id}')
+        
+        return {
+            'success': True,
+            'target_id': target_id,
+            'beacon_id': f'BEACON-{target_id.split("-")[-1]}',
+        }
+
+    def register_camera(self, camera_id: str, config: Optional[dict] = None) -> dict:
+        """Register a new FSOC camera with the backend engine."""
+        if camera_id in self._cameras:
+            return {'success': False, 'error': f'Camera {camera_id} already exists'}
+        
+        cc = config or {}
+        camera = Camera(CameraConfig(
+            fov_h=cc.get('fov_h', 4.0),
+            fov_v=cc.get('fov_v', 3.0),
+            resolution_w=cc.get('resolution_w', 640),
+            resolution_h=cc.get('resolution_h', 480),
+            fps=cc.get('fps', 30.0),
+            noise_level=cc.get('noise_level', 0.02),
+        ))
+        
+        self._cameras[camera_id] = camera
+        self._emit_event('info', f'CAMERA CREATED — {camera_id}')
+        
+        return {'success': True, 'camera_id': camera_id}
+
+    def register_satellite(self, satellite_id: str, camera_id: str) -> dict:
+        """Register a satellite with its associated FSOC camera."""
+        if satellite_id in self._satellites:
+            return {'success': False, 'error': f'Satellite {satellite_id} already exists'}
+        
+        if camera_id not in self._cameras:
+            # Auto-create camera if it doesn't exist
+            self.register_camera(camera_id)
+        
+        self._satellites[satellite_id] = {
+            'camera_id': camera_id,
+            'created_at': time.time(),
+        }
+        self._emit_event('info', f'SATELLITE CREATED — {satellite_id} → {camera_id}')
+        
+        return {'success': True, 'satellite_id': satellite_id, 'camera_id': camera_id}
+
+    def get_entity_registry(self) -> dict:
+        """Return the current entity registry for frontend synchronization."""
+        # Resolve the active camera: find whichever registered satellite
+        # owns the camera that is currently configured on self._camera.
+        # Fall back to 'FSOC-CAM-01' if the registry hasn't been populated.
+        active_camera = next(
+            (sat['camera_id'] for sat in self._satellites.values()
+             if sat.get('is_active')),
+            next(iter(self._cameras), 'FSOC-CAM-01'),
+        )
+        return {
+            'targets': list(self._targets.keys()),
+            'cameras': list(self._cameras.keys()),
+            'satellites': list(self._satellites.keys()),
+            'active_target': self._target.config.id if self._target else None,
+            'active_camera': active_camera,
+        }
+
     async def start(self, config: Optional[dict] = None,
                     demo_mode: bool = False) -> str:
         if self._running:
@@ -155,6 +289,8 @@ class SimulationEngine:
         self._reset_state()
         # A new run must never inherit the paused state of the previous one.
         self._paused = False
+        self._stopped = False  # Reset stopped flag for new run
+        self._run_counter += 1  # Increment run counter for stale callback detection
         self._demo_mode = demo_mode
         self._demo_phase = 0
         self._demo_phase_start = 0.0
@@ -180,14 +316,51 @@ class SimulationEngine:
 
     async def stop(self) -> None:
         self._running = False
+        self._stopped = True  # Set explicit stopped state
         if self._task and not self._task.done():
             self._task.cancel()
             try:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        # Send final telemetry frame with stopped status before finalizing
+        await self._send_stop_telemetry()
         self._finalize_run('aborted')
         self._emit_event('warning', 'SIMULATION STOPPED')
+
+    async def _send_stop_telemetry(self) -> None:
+        """Send a final telemetry frame with stopped status to frontend."""
+        if not self._broadcast:
+            return
+        try:
+            now = time.time()
+            telemetry = {
+                'type': 'telemetry',
+                'payload': {
+                    'timestamp': now,
+                    'frame_id': self._frame_id,
+                    'elapsed': round(self._elapsed, 3),
+                    'sim_status': 'stopped',
+                    'source': 'virtual',
+                    'target_state': 'IDLE',
+                    'target': self._target.state_dict(now) if self._target else None,
+                    'targets': [],
+                    'centroiding_error': {},
+                    'pixel_error': {},
+                    'target_offset': self._target_offset.as_dict(),
+                    'camera': self._camera.state_dict(now),
+                    'detection': None,
+                    'kalman': None,
+                    'angular_error': {'pan_error': 0.0, 'tilt_error': 0.0, 'total_error': 0.0},
+                    'pid_output': {},
+                    'disturbance': {},
+                    'metrics': {},
+                    'events': [{'id': str(uuid.uuid4()), 'timestamp': now, 'level': 'warning', 'message': 'SIMULATION STOPPED'}],
+                },
+            }
+            await self._broadcast(telemetry)
+        except Exception:
+            pass
 
     async def pause(self) -> None:
         self._paused = not self._paused
@@ -197,6 +370,7 @@ class SimulationEngine:
     async def reset(self) -> None:
         await self.stop()
         self._reset_state()
+        self._stopped = False  # Reset stopped flag after reset
 
     # Disturbance sections in stable order: (config key, label)
     DISTURBANCE_SECTIONS = (
@@ -245,12 +419,24 @@ class SimulationEngine:
         self._pid.update_config(pc)
         self._emit_event('info', f'PID UPDATED — Kp={pc.kp} Ki={pc.ki} Kd={pc.kd}')
 
+    def update_kalman(self, config: dict) -> None:
+        kc = KalmanConfig(
+            process_noise_q=config.get('process_noise_q', DEFAULT_KALMAN.process_noise_q),
+            measurement_noise_r=config.get('measurement_noise_r', DEFAULT_KALMAN.measurement_noise_r),
+            initial_covariance=config.get('initial_covariance', DEFAULT_KALMAN.initial_covariance),
+        )
+        self._kalman = KalmanFilter2D(kc)
+        self._emit_event('info',
+                         f'KALMAN UPDATED — Q={kc.process_noise_q} '
+                         f'R={kc.measurement_noise_r} P0={kc.initial_covariance}')
+
     def update_camera_angles(self, pan: float, tilt: float) -> None:
         """Direct camera control (from CameraControl page)."""
+        dt = 1.0 / max(self._camera.config.fps, 1.0)
         self._camera.apply_correction(
             pan - self._camera.pan,
             tilt - self._camera.tilt,
-            0.033
+            dt,
         )
 
     def set_target_offset(self, x: float, y: float, z: float) -> None:
@@ -265,6 +451,58 @@ class SimulationEngine:
         self._target_offset = Vec3(cx, cy, cz)
         self._emit_event('info', f'TARGET OFFSET → ({cx:.1f}, {cy:.1f}, {cz:.1f}) m')
 
+    # ── Atmospheric optical path ────────────────────────────────
+    VALID_ATMOS_MODES = ('clear', 'haze', 'fog', 'rain', 'low_light')
+
+    def _set_atmosphere(self, mode: str, strength: float, emit: bool = True) -> None:
+        """Set detection-image atmospheric degradation (haze/fog/rain/low_light).
+
+        Applied inside FrameRenderer BEFORE ImageBeaconDetector sees the
+        frame — never as a post-detection effect or frontend-only overlay.
+        """
+        m = str(mode or 'clear').lower()
+        if m not in self.VALID_ATMOS_MODES:
+            m = 'clear'
+        try:
+            s = max(0.0, min(1.0, float(strength)))
+        except (TypeError, ValueError):
+            s = 0.0
+        if m == 'clear':
+            s = 0.0
+        self._atmos_mode = m
+        self._atmos_strength = s
+        if emit:
+            self._emit_event('info', f'ATMOSPHERE → {m.upper()} strength={s:.2f}')
+
+    def set_atmosphere(self, mode: str, strength: float) -> None:
+        self._set_atmosphere(mode, strength, emit=True)
+
+    def _env_baseline_disturbances(self) -> 'DisturbanceConfig':
+        """Seed turbulence strength/frequency from the environment preset.
+
+        Maps scintillation_index → turbulence strength and wind_speed →
+        turbulence frequency so environment selection genuinely changes
+        simulation behaviour. Explicit disturbance config always overrides
+        these baselines; a disabled turbulence section has no effect.
+        """
+        from simulation.environment import get_environment
+        try:
+            env = get_environment(self._env_type)
+        except Exception:
+            env = get_environment('urban')
+        dc = DisturbanceConfig()
+        try:
+            si = float(env.scintillation_index)
+        except (TypeError, ValueError):
+            si = 2e-14
+        try:
+            ws = float(env.wind_speed)
+        except (TypeError, ValueError):
+            ws = 6.0
+        dc.atmospheric_turbulence.strength = max(0.05, min(1.0, si / 3e-14))
+        dc.atmospheric_turbulence.frequency = max(0.5, min(8.0, (ws / 6.0) * 2.0 if ws > 0 else 0.5))
+        return dc
+
     def switch_target(
         self,
         target_id: str = "TARGET-01",
@@ -274,8 +512,9 @@ class SimulationEngine:
         beacon_offset: Optional[dict] = None,
     ) -> None:
         """Switch coarse-alignment tracking objective to target_id.
-        Re-initializes the active tracked target, resets state to SEARCHING,
-        and clears Kalman/PID/lock histories.
+        Re-initializes the active tracked target, resets ALL per-target state
+        (including missed_frames so we never enter LOST on the first tick),
+        and slews the virtual camera toward the new target's angular position.
         """
         init_pos = position or {'x': 0.0, 'y': 0.0, 'z': 350.0}
         init_vel = velocity or {'x': 0.0, 'y': 0.0, 'z': 0.0}
@@ -310,19 +549,65 @@ class SimulationEngine:
             period=20.0,
         ))
         self._target_offset = Vec3(0.0, 0.0, 0.0)
+
+        # ── Critical: reset ALL per-target state ─────────────────────
+        # Without this, accumulated missed_frames from the previous target
+        # causes _update_target_state() to enter LOST on the very first tick.
+        self._missed_frames = 0
         self._lock_count = 0
         self._search_t = 0.0
         self._acq_started = False
         self._target_state = 'SEARCHING'
         self._kalman.reset()
         self._pid.reset()
+
+        # Recalculate lost threshold in case fps changed since loop start
+        fps = float(getattr(self._camera.config, 'fps', 60.0))
+        self._lost_frames_threshold = max(10, int(fps * self.LOST_GRACE_SECONDS))
+        self._coast_frames = max(1, int(fps * 1.0))
+
+        # ── Slew camera toward the new target's angular position ─────
+        # This prevents the sweep from starting at the wrong boresight.
+        beacon_pos = self._effective_beacon_pos()
+        pan_err, tilt_err = self._camera.angular_error_to_target(beacon_pos)
+        # Snap directly to pointing at the target so acquisition can begin
+        # immediately rather than after a full sweep cycle.  The PID still
+        # closes the residual error smoothly on subsequent frames.
+        self._camera.apply_correction(pan_err, tilt_err, 1.0)
+        # Anchor the sweep on the newly slewed pointing direction.
+        self._search_pan0 = self._camera.pan
+        self._search_tilt0 = self._camera.tilt
+
         if hasattr(self._detector, 'set_target'):
             self._detector.set_target(
                 self._target.config.id,
                 self._target.config.beacon_size_px,
             )
         self._emit_event('info', f'TRACK TARGET — {target_id}')
-        self._emit_event('info', f'SEARCHING FOR {target_id}')
+        self._emit_event('info', f'ACQUISITION STARTED — SEARCHING FOR {target_id}')
+
+    def reacquire(self) -> None:
+        """Force a fresh acquisition attempt from any state (including LOST).
+        Resets missed_frames and Kalman without replacing the target.
+        """
+        self._missed_frames = 0
+        self._lock_count = 0
+        self._search_t = 0.0
+        self._acq_started = False
+        self._target_state = 'SEARCHING'
+        self._kalman.reset()
+        self._pid.reset()
+        # Re-slew camera toward current target position
+        beacon_pos = self._effective_beacon_pos()
+        pan_err, tilt_err = self._camera.angular_error_to_target(beacon_pos)
+        self._camera.apply_correction(pan_err, tilt_err, 1.0)
+        self._search_pan0 = self._camera.pan
+        self._search_tilt0 = self._camera.tilt
+        fps = float(getattr(self._camera.config, 'fps', 60.0))
+        self._lost_frames_threshold = max(10, int(fps * self.LOST_GRACE_SECONDS))
+        self._coast_frames = max(1, int(fps * 1.0))
+        self._emit_event('info', f'REACQUIRE — {self._target.config.id}')
+        self._emit_event('info', 'SEARCHING FOR BEACON…')
 
     def _effective_beacon_pos(self) -> Vec3:
         """True beacon world position: target + mount offset + operator offset."""
@@ -340,6 +625,8 @@ class SimulationEngine:
 
     @property
     def status(self) -> str:
+        if self._stopped:
+            return 'stopped'
         if not self._running:
             return 'idle'
         if self._paused:
@@ -355,7 +642,9 @@ class SimulationEngine:
     async def _loop(self) -> None:
         fps = float(self._camera.config.fps or 30.0)
         dt = 1.0 / fps
-        self._lost_frames_threshold = max(10, int(fps * 1.0))  # ~1 s of misses → LOST
+        # Grace period scales with FPS — at least 3 seconds before declaring LOST
+        self._lost_frames_threshold = max(10, int(fps * self.LOST_GRACE_SECONDS))
+        self._coast_frames = max(1, int(fps * 1.0))
 
         while self._running:
             if self._paused:
@@ -433,6 +722,8 @@ class SimulationEngine:
                 noise_type=dist_state.get('noise_type', 'gaussian'),
                 noise_level=dist_state.get('noise_level', 0.0),
                 turb_strength=turb_s,
+                atmos_mode=self._atmos_mode,
+                atmos_strength=self._atmos_strength,
                 rng=self._rng,
             )
 
@@ -530,13 +821,21 @@ class SimulationEngine:
                     'ff_tilt_rate': round(ff_tilt_rate, 4),
                 }
             else:
-                # No measurement and no estimate: slow search sweep,
+                # No measurement and no estimate: expanding search sweep,
                 # slew-rate limited like every other camera motion.
+                # Centred on the last-known pointing direction: it starts as
+                # a dense local scan (highest posterior probability) and
+                # expands to the full ±60°/±20° envelope over ~25 s.
+                # Zero phase offset so it starts at the centre, not off-axis.
                 pid_out = self._pid.coast()
                 self._search_t += dt
-                sweep_pan = self.SEARCH_SWEEP_AMP * math.sin(
-                    self.SEARCH_SWEEP_RATE * self._search_t)
-                sweep_tilt = 6.0 * math.sin(0.18 * self._search_t + 1.0)
+                ramp = min(1.0, self._search_t / 90.0)
+                pan_amp = 8.0 + (self.SEARCH_SWEEP_AMP - 8.0) * ramp
+                tilt_amp = 3.0 + (20.0 - 3.0) * ramp
+                sweep_pan = (self._search_pan0 + pan_amp * math.sin(
+                    self.SEARCH_SWEEP_RATE * self._search_t))
+                sweep_tilt = (self._search_tilt0
+                              + tilt_amp * math.sin(0.12 * self._search_t))
                 self._slew_toward(sweep_pan, sweep_tilt, dt)
 
             # ── State machine (detection + pixel error) ────────
@@ -612,6 +911,10 @@ class SimulationEngine:
                     },
                     'pid_output': pid_out,
                     'disturbance': dist_state,
+                    'atmosphere': {
+                        'mode': self._atmos_mode,
+                        'strength': round(self._atmos_strength, 3),
+                    },
                     'metrics': frame_metrics,
                     'events': self._drain_events(),
                 },
@@ -647,16 +950,56 @@ class SimulationEngine:
                 new = 'LOCKED'
             elif pix_total <= self.TARGET_LOCK_THRESHOLD_PX:
                 new = 'TRACKING'
-            elif pix_total <= 40.0:
+            elif pix_total <= self.ACQUIRING_THRESHOLD_PX:
                 new = 'ACQUIRING'
             else:
                 new = 'DETECTED'
         else:
             self._lock_count = 0
+            # Coast-to-sweep handover: after ~1 s without measurements the
+            # Kalman prediction is stale. Drop it so the SEARCHING sweep
+            # (mx=None path) takes over instead of the PID chasing a
+            # diverging prediction forever while Kalman stays initialized
+            # (which would also starve the sweep and make LOST unreachable).
+            if (self._missed_frames > self._coast_frames
+                    and self._kalman.is_initialized):
+                self._kalman.reset()
+                self._pid.reset()
             if self._missed_frames > self._lost_frames_threshold:
-                new = 'LOST'
+                # LOST fires ONCE per loss episode (from a tracking/search
+                # state). While already in LOST/REACQUIRING the sweep keeps
+                # running with a monotonically advancing phase — resetting
+                # _search_t here would restart the Lissajous every grace
+                # period and the camera would never scan past the sweep's
+                # initial segment.
+                if prev in ('LOST', 'REACQUIRING'):
+                    new = 'REACQUIRING'
+                    self._missed_frames = 0
+                else:
+                    new = 'LOST'
+                    self._missed_frames = 0
+                    self._kalman.reset()  # stale estimate is worthless
+                    self._pid.reset()     # avoid windup-driven re-loss
+                    # Fresh loss episode: anchor the expanding sweep on the
+                    # last-known pointing and restart it as a local scan.
+                    self._search_pan0 = self._camera.pan
+                    self._search_tilt0 = self._camera.tilt
+                    self._search_t = 0.0
+                    self._reacquire_start_time = self._elapsed
+            elif prev in ('LOST', 'REACQUIRING'):
+                # Check for REACQUIRING timeout
+                reacquire_duration = self._elapsed - self._reacquire_start_time
+                if reacquire_duration > self.REACQUIRE_TIMEOUT_SECONDS:
+                    # Timeout: return to SEARCHING; the sweep phase is left
+                    # running so coverage continues instead of restarting.
+                    new = 'SEARCHING'
+                    self._emit_event('warning', f'REACQUIRE TIMEOUT — RETURNING TO SEARCHING ({self.REACQUIRE_TIMEOUT_SECONDS:.0f}s)')
+                else:
+                    # Active reacquisition: stay in REACQUIRING until detection
+                    new = 'REACQUIRING'
             elif prev in ('LOCKED', 'TRACKING', 'ACQUIRING', 'DETECTED'):
                 new = 'REACQUIRING'
+                self._reacquire_start_time = self._elapsed
             else:
                 new = 'SEARCHING'
 
@@ -674,16 +1017,16 @@ class SimulationEngine:
                 'ACQUIRING': ('info', 'TARGET ACQUIRING'),
                 'TRACKING': ('success', 'TRACKING STARTED'),
                 'LOCKED': ('success', 'LOCK ACQUIRED — ERROR ≤ 10 PX'),
-                'LOST': ('warning', 'TARGET LOST'),
+                'LOST': ('warning', 'TARGET LOST — REACQUIRING…'),
                 'REACQUIRING': ('warning', 'REACQUISITION STARTED'),
             }
             if new in state_events:
                 lvl, msg = state_events[new]
                 self._emit_event(lvl, msg)
-            if prev == 'LOST' and new in ('TRACKING', 'LOCKED'):
-                self._emit_event('success', 'REACQUISITION COMPLETE')
             if prev in ('READY', 'SEARCHING', 'DETECTED', 'ACQUIRING') and new == 'TRACKING':
                 self._emit_event('success', 'ACQUISITION COMPLETE')
+            if prev in ('REACQUIRING', 'LOST') and new in ('TRACKING', 'LOCKED'):
+                self._emit_event('success', 'BEACON REACQUIRED — TRACKING RESUMED')
 
     # ── Demo phases ───────────────────────────────────────────
 
@@ -708,14 +1051,34 @@ class SimulationEngine:
     # ── Helpers ───────────────────────────────────────────────
 
     def _apply_config(self, config: dict) -> None:
-        self._env_type = config.get('environment', 'urban')
+        env_type = config.get('environment', 'urban')
+        try:
+            get_environment(env_type)
+            self._env_type = env_type
+        except Exception:
+            self._env_type = 'urban'
+
+        # ── Atmospheric optical path (detection-image degradation) ──
+        # Frontend sends atmospheric_mode at start; default is clear (no-op).
+        self._set_atmosphere(
+            config.get('atmospheric_mode', 'clear'),
+            config.get('atmospheric_strength', 0.5),
+            emit=False,
+        )
 
         if 'target' in config:
             tc = config['target']
             bo = tc.get('beacon_offset', {'x': 0, 'y': 0, 'z': 0})
+            init_pos = tc.get('initial_position', {'x': -8, 'y': 2, 'z': 350})
+            if tc.get('random_init'):
+                # PS169 default-random initial location (seeded if requested).
+                # The beacon stays attached via beacon_offset — only the
+                # target anchor is sampled, inside the sweep-reachable range.
+                from simulation.target import random_initial_position
+                init_pos = random_initial_position(tc.get('seed')).as_dict()
             self._target = Target(TargetConfig(
                 id=tc.get('id', 'BEACON-01'),
-                initial_position=Vec3(**tc.get('initial_position', {'x': -8, 'y': 2, 'z': 350})),
+                initial_position=Vec3(**init_pos),
                 velocity=Vec3(**tc.get('velocity', {'x': 6.0, 'y': 0.3, 'z': 0.0})),
                 trajectory=tc.get('trajectory', 'linear'),
                 intensity=float(tc.get('beacon_intensity', tc.get('intensity', 0.95))),
@@ -761,6 +1124,7 @@ class SimulationEngine:
 
         plat_motion = config.get('platform_motion') or (config.get('camera', {}).get('platform_motion', 'stationary'))
         plat_speed  = float(config.get('platform_speed') or (config.get('camera', {}).get('platform_speed', 2.0)))
+        plat_vel = config.get('platform_velocity') or (config.get('camera', {}).get('platform_velocity', {'x': 2.0, 'y': 0.0, 'z': 0.0}))
 
         if 'camera' in config:
             cc = config['camera']
@@ -773,11 +1137,13 @@ class SimulationEngine:
                 noise_level=cc.get('noise_level', 0.02),
                 platform_motion=plat_motion,
                 platform_speed=plat_speed,
+                platform_velocity=Vec3(**plat_vel),
             ))
         else:
             self._camera = Camera(CameraConfig(
                 platform_motion=plat_motion,
                 platform_speed=plat_speed,
+                platform_velocity=Vec3(**plat_vel),
             ))
         # Renderer resolution always matches the configured camera
         self._renderer = FrameRenderer(
@@ -785,11 +1151,15 @@ class SimulationEngine:
             height=self._camera.config.resolution_h,
         )
 
+        # ── Environment baseline → disturbances ───────────────────
+        # The environment preset seeds turbulence strength/frequency from its
+        # scintillation_index/wind_speed. Explicit disturbance config always
+        # wins. Starting from the baseline (not the previous run's engine)
+        # also stops disturbance state leaking across runs.
+        self._disturbances = DisturbanceEngine(self._env_baseline_disturbances())
         if 'disturbances' in config:
-            self._disturbances = DisturbanceEngine(
+            self._disturbances.update_config(
                 self._dict_to_disturbance_config(config['disturbances']))
-        else:
-            self._disturbances = DisturbanceEngine()
 
         if 'pid' in config:
             pc = config['pid']
@@ -862,6 +1232,8 @@ class SimulationEngine:
         self._missed_frames = 0
         self._lock_count = 0
         self._search_t = 0.0
+        self._search_pan0 = 0.0
+        self._search_tilt0 = 0.0
         self._acq_started = False
         self._events = []
 

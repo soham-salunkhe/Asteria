@@ -1,7 +1,13 @@
 /**
- * FSOC — Settings Page
+ * ASTERIA — Settings Page
+ *
+ * SIMULATION/PID/KALMAN/NOISE settings are pushed live to the backend
+ * engine via the existing REST API. Anything that cannot affect the
+ * simulation is explicitly labeled informational.
  */
 import React, { useState } from 'react';
+import { useSimulation } from '../../hooks/useSimulation';
+import { fsocApi } from '../../services/fsocApi';
 
 interface SettingsSection {
   title: string;
@@ -9,6 +15,9 @@ interface SettingsSection {
 }
 
 export function SettingsPage() {
+  const sim = useSimulation();
+  const [applying, setApplying] = useState(false);
+  const [applyMsg, setApplyMsg] = useState<string | null>(null);
   const [settings, setSettings] = useState({
     // Simulation
     fps: 30,
@@ -53,6 +62,46 @@ export function SettingsPage() {
       <div className="page-header">
         <h2 className="page-title">Settings</h2>
         <span className="page-subtitle">System Configuration</span>
+        <button
+          className="mc-btn-custom"
+          disabled={applying}
+          style={{ marginLeft: 12, pointerEvents: 'auto' }}
+          title="Push PID, Kalman and sensor-noise settings live to the backend engine"
+          onClick={async () => {
+            setApplying(true);
+            setApplyMsg(null);
+            try {
+              await sim.updatePID({
+                kp: settings.kp, ki: settings.ki, kd: settings.kd,
+                max_angular_velocity: settings.maxVelocity,
+                settling_threshold: settings.settlingThreshold,
+              });
+              await fsocApi.updateKalman({
+                process_noise_q: settings.processNoiseQ,
+                measurement_noise_r: settings.measurementNoiseR,
+                initial_covariance: settings.initialCovariance,
+              });
+              await sim.updateDisturbanceConfig({
+                ...sim.disturbances,
+                sensor_noise: {
+                  ...sim.disturbances.sensor_noise,
+                  enabled: settings.noiseLevel > 0,
+                  noise_level: settings.noiseLevel,
+                },
+              });
+              setApplyMsg('Applied — PID, Kalman and sensor noise pushed to the live engine.');
+            } catch (e) {
+              setApplyMsg(`Apply failed: ${e instanceof Error ? e.message : String(e)}`);
+            } finally {
+              setApplying(false);
+            }
+          }}
+        >
+          {applying ? 'APPLYING…' : 'APPLY TO SIMULATION'}
+        </button>
+        {applyMsg && (
+          <span className="page-subtitle" style={{ marginLeft: 8 }}>{applyMsg}</span>
+        )}
       </div>
 
       <div className="settings-body">
@@ -73,6 +122,10 @@ export function SettingsPage() {
           <ToggleSetting label="Use YOLO Model (requires model file)" value={settings.useYolo} onChange={v => set('useYolo', v)} />
           <TextSetting   label="Model Path"                          value={settings.modelPath as string} onChange={v => set('modelPath', v)} />
           <NumberSetting label="Confidence Threshold"                value={settings.confThreshold} onChange={v => set('confThreshold', v)} min={0.1} max={1.0} step={0.01} />
+          <div className="settings-note">
+            Informational — no trained YOLO model is bundled, so the classical CV detector stays active
+            (backend reports “YOLO unavailable → Classical CV fallback”). The toggle above does not change detection.
+          </div>
         </SettingsGroup>
 
         <SettingsGroup title="KALMAN FILTER">
@@ -99,7 +152,8 @@ export function SettingsPage() {
         </SettingsGroup>
 
         <div className="settings-note">
-          Note: Changes to backend parameters (Kalman, PID, detection) take effect on the next simulation start.
+          Note: APPLY TO SIMULATION pushes PID, Kalman and sensor-noise to the live engine immediately.
+          Camera FOV/resolution/fps apply at the next mission start (Mission Control → START CUSTOM).
           Frontend-only changes (history buffer, charts) apply immediately.
         </div>
       </div>

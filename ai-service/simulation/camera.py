@@ -17,8 +17,11 @@ class CameraConfig:
     resolution_h: int = 480
     fps: float = 30.0
     noise_level: float = 0.02
-    platform_motion: str = 'stationary'  # 'stationary', 'uav_hover', 'orbital', 'circular_patrol'
+    platform_motion: str = 'stationary'  # 'stationary' | 'linear' | 'uav_hover' | 'orbital' | 'circular_patrol'
     platform_speed: float = 2.0
+    # Constant translation velocity (m/s) for 'linear' platform motion.
+    # Integrated incrementally: position += velocity * dt.
+    platform_velocity: Vec3 = field(default_factory=lambda: Vec3(2.0, 0.0, 0.0))
 
 
 class Camera:
@@ -53,7 +56,15 @@ class Camera:
         base = self._initial_pos
         spd = getattr(self.config, 'platform_speed', 2.0)
 
-        if mode == 'uav_hover':
+        if mode == 'linear':
+            # PS169 mandatory platform motion: constant-velocity translation.
+            # Incremental integration (position += velocity * dt) so the
+            # platform pose never jumps, regardless of frame timing.
+            v = getattr(self.config, 'platform_velocity', Vec3(2.0, 0.0, 0.0))
+            p = self.config.position
+            self.config.position = Vec3(
+                p.x + v.x * dt, p.y + v.y * dt, p.z + v.z * dt)
+        elif mode == 'uav_hover':
             # UAV aerodynamic hover drift: small multiaxial harmonic sway
             dx = 6.0 * math.sin(0.4 * t)
             dy = 2.5 * math.cos(0.35 * t)
@@ -109,6 +120,12 @@ class Camera:
         self._tilt = 0.0
         self._pan_rate = 0.0
         self._tilt_rate = 0.0
+        self._t = 0.0
+        self.config.position = Vec3(
+            self._initial_pos.x,
+            self._initial_pos.y,
+            self._initial_pos.z,
+        )
 
     # ── Projection ────────────────────────────────────────────
 
