@@ -33,7 +33,7 @@ export function LiveTrackingPage() {
   const dis   = f?.disturbance;
 
   const fmt = (v: number | undefined | null, dec = 2) =>
-    v !== null && v !== undefined ? v.toFixed(dec) : '—';
+    v !== null && v !== undefined ? v.toFixed(dec) : null;
 
   return (
     <div className="page-tracking">
@@ -116,6 +116,11 @@ export function LiveTrackingPage() {
           </div>
           <div className="vstrip-sep" />
           <div className="vstrip-item">
+            <span className="vstrip-label">INPUT</span>
+            <span className="vstrip-val">{f?.source === 'video_input' ? 'VIDEO' : 'VIRTUAL'}</span>
+          </div>
+          <div className="vstrip-sep" />
+          <div className="vstrip-item">
             <span className="vstrip-label">ELAPSED</span>
             <span className="vstrip-val">{fmt(f?.elapsed, 1)} s</span>
           </div>
@@ -179,20 +184,20 @@ export function LiveTrackingPage() {
               label: 'PAN ERROR',
               value: fmt(err?.pan_error),
               unit: '°',
-              warn: Math.abs(err?.pan_error ?? 0) > 2,
+              warn: err?.pan_error != null && Math.abs(err.pan_error) > 2,
             },
             {
               label: 'TILT ERROR',
               value: fmt(err?.tilt_error),
               unit: '°',
-              warn: Math.abs(err?.tilt_error ?? 0) > 2,
+              warn: err?.tilt_error != null && Math.abs(err.tilt_error) > 2,
             },
             {
               label: 'TOTAL ERROR',
               value: fmt(err?.total_error),
               unit: '°',
-              highlight: (err?.total_error ?? 0) < 0.5,
-              warn: (err?.total_error ?? 0) > 2,
+              highlight: err?.total_error != null && err.total_error < 0.5,
+              warn: err?.total_error != null && err.total_error > 2,
             },
           ]}
         />

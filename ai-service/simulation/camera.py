@@ -37,7 +37,7 @@ class Camera:
     """
 
     PAN_LIMIT = 180.0
-    TILT_LIMIT = 90.0
+    TILT_LIMIT = 89.0
 
     def __init__(self, config: CameraConfig):
         self.config = config
@@ -133,59 +133,46 @@ class Camera:
         """
         Project a world-space position onto the image plane.
         Returns (px, py) in pixel coordinates, or None if behind/outside FOV.
+
+        The world offset is first rotated into the CAMERA frame (inverse of
+        the pan/tilt gimbal rotation, YXZ yaw-then-pitch).  The behind test
+        uses camera-space forward depth, so targets behind the WORLD +Z
+        plane are still projectable whenever the gimbal actually faces
+        them — only targets truly behind the optical aperture return None.
+        Sign conventions (+pan = right/East, +tilt = up) match the previous
+        implementation exactly for the forward hemisphere.
         """
         cam = self.config.position
-        # Relative position
+        # Relative position in world axes
         dx = world_pos.x - cam.x
         dy = world_pos.y - cam.y
-        dz = world_pos.z - cam.z   # forward distance
+        dz = world_pos.z - cam.z
 
-        if dz <= 0.01:
-            return None  # behind camera
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist < 1e-6:
+            return None  # coincident with the aperture
 
-        # Camera optical-axis direction from pan/tilt
         pan_r = math.radians(self._pan)
         tilt_r = math.radians(self._tilt)
 
-        # Direction cosines of optical axis
-        ax = math.sin(pan_r) * math.cos(tilt_r)
-        ay = math.sin(tilt_r)
-        az = math.cos(pan_r) * math.cos(tilt_r)
+        # Inverse gimbal rotation R^-1 = Rx(+tilt) · Ry(-pan): world offset
+        # → camera-space offset (x right, y up, z forward along the axis).
+        cp = math.cos(pan_r)
+        sp = math.sin(pan_r)
+        x1 = cp * dx - sp * dz
+        z1 = sp * dx + cp * dz
+        y1 = dy
+        ct = math.cos(tilt_r)
+        st = math.sin(tilt_r)
+        x2 = x1
+        y2 = ct * y1 - st * z1
+        z2 = st * y1 + ct * z1
 
-        # Target direction unit vector
-        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-        if dist < 1e-6:
-            return None
-        tx, ty, tz = dx / dist, dy / dist, dz / dist
+        if z2 <= 0.01:
+            return None  # genuinely behind the optical aperture
 
-        # Angular offset of target from optical axis
-        dot = ax * tx + ay * ty + az * tz
-        dot = max(-1.0, min(1.0, dot))
-
-        # Angle in the image plane
-        # Camera basis: right = up x axis, local-up = axis x right
-        # (right-handed, so +pan moves the spot right, +tilt moves it up)
-        up = (0.0, 1.0, 0.0)
-        right_x = up[1] * az - up[2] * ay
-        right_y = up[2] * ax - up[0] * az
-        right_z = up[0] * ay - up[1] * ax
-        rlen = math.sqrt(right_x**2 + right_y**2 + right_z**2)
-        if rlen < 1e-6:
-            return None
-        right_x /= rlen
-        right_y /= rlen
-        right_z /= rlen
-
-        # Local up: cross(axis, right)
-        lup_x = ay * right_z - az * right_y
-        lup_y = az * right_x - ax * right_z
-        lup_z = ax * right_y - ay * right_x
-
-        # Project target onto local frame
-        ang_h = math.degrees(math.atan2(
-            tx * right_x + ty * right_y + tz * right_z, dot))
-        ang_v = math.degrees(math.atan2(
-            tx * lup_x + ty * lup_y + tz * lup_z, dot))
+        ang_h = math.degrees(math.atan2(x2, z2))
+        ang_v = math.degrees(math.atan2(y2, z2))
 
         half_h = self.config.fov_h / 2.0
         half_v = self.config.fov_v / 2.0
@@ -202,21 +189,46 @@ class Camera:
         """
         Return (pan_error, tilt_error) in degrees — the angular offset the
         camera must traverse to centre the target on the optical axis.
+
+        Uses the full camera-frame projection so the result is consistent with
+        project_world_to_pixel.  When the target is behind the optical
+        aperture (camera-space z ≤ 0) a large directional error is returned
+        so the search sweep is driven toward the correct hemisphere rather
+        than receiving a zero signal that halts all motion.
         """
         cam = self.config.position
         dx = world_pos.x - cam.x
         dy = world_pos.y - cam.y
         dz = world_pos.z - cam.z
 
-        if dz <= 0:
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if dist < 1e-6:
             return (0.0, 0.0)
 
-        # True azimuth / elevation to target
-        target_pan = math.degrees(math.atan2(dx, dz))
-        target_tilt = math.degrees(math.atan2(dy, math.sqrt(dx**2 + dz**2)))
+        pan_r  = math.radians(self._pan)
+        tilt_r = math.radians(self._tilt)
 
-        pan_err = target_pan - self._pan
-        tilt_err = target_tilt - self._tilt
+        # Inverse gimbal rotation R^-1 = Rx(+tilt) · Ry(-pan)
+        cp = math.cos(pan_r);  sp = math.sin(pan_r)
+        x1 =  cp * dx - sp * dz
+        z1 =  sp * dx + cp * dz
+        y1 = dy
+        ct = math.cos(tilt_r); st = math.sin(tilt_r)
+        # x2 = x1 (unchanged)
+        y2 =  ct * y1 - st * z1
+        z2 =  st * y1 + ct * z1
+
+        if z2 <= 0.0:
+            # Target is behind the optical aperture.  Return a large error
+            # whose sign indicates the correct hemisphere to pan/tilt toward.
+            # This drives the deterministic search sweep rather than producing
+            # a zero signal that freezes all camera motion.
+            pan_err  = math.copysign(120.0, x1)
+            tilt_err = math.copysign(60.0,  y2 if y2 != 0.0 else y1)
+            return (pan_err, tilt_err)
+
+        pan_err  = math.degrees(math.atan2(x1, z2))
+        tilt_err = math.degrees(math.atan2(y2, z2))
         return (pan_err, tilt_err)
 
     def state_dict(self, timestamp: float) -> dict:

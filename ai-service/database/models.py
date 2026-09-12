@@ -246,6 +246,53 @@ def save_telemetry_sample(run_id: str, frame: dict, frame_id: int) -> None:
     conn.close()
 
 
+def save_telemetry_samples(run_id: str, frames: list[tuple[dict, int]]) -> None:
+    """Persist a complete video-frame log in one transaction.
+
+    Video processing keeps this off the frame hot path, then writes every
+    processed frame at completion.  This preserves the benchmark's measured
+    processing latency while making CSV/JSON/PDF reports reproducible from
+    the same measurements that drove the controller.
+    """
+    if not frames:
+        return
+    conn = get_conn()
+    try:
+        for frame, frame_id in frames:
+            cam = frame.get('camera', {})
+            err = frame.get('angular_error', {})
+            met = frame.get('metrics', {})
+            kal = frame.get('kalman') or {}
+            dis = frame.get('disturbance', {})
+            # Video telemetry calls this pixel_error; the synthetic camera
+            # calls it centroiding_error.  They share the same measurement
+            # schema and must be reportable identically.
+            c_err = frame.get('centroiding_error') or frame.get('pixel_error') or {}
+            kal_pos = kal.get('position', {}) if kal else {}
+            conn.execute(
+                """INSERT INTO telemetry_samples
+                   (run_id, timestamp, frame_id, elapsed, target_state,
+                    pan, tilt, pan_error, tilt_error, total_error,
+                    confidence, fps, processing_ms, kalman_x, kalman_y, disturbance_idx,
+                    pixel_error_x, pixel_error_y, pixel_error_total, centroid_x, centroid_y, target_px_x, target_px_y)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (run_id, frame.get('timestamp', time.time()), frame_id,
+                 frame.get('elapsed', 0), frame.get('target_state', 'UNKNOWN'),
+                 cam.get('pan', 0), cam.get('tilt', 0),
+                 err.get('pan_error', 0), err.get('tilt_error', 0), err.get('total_error', 0),
+                 met.get('detection_confidence', 0), met.get('fps', 0), met.get('processing_ms', 0),
+                 kal_pos.get('x', 0), kal_pos.get('y', 0),
+                 dis.get('total_disturbance_index', 0),
+                 c_err.get('x', c_err.get('pixel_error_x')),
+                 c_err.get('y', c_err.get('pixel_error_y')),
+                 c_err.get('total', c_err.get('pixel_error_total')),
+                 c_err.get('centroid_x'), c_err.get('centroid_y'),
+                 c_err.get('target_px_x'), c_err.get('target_px_y')))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_telemetry(run_id: str, limit: int = 5000) -> list[dict]:
     conn = get_conn()
     rows = conn.execute(

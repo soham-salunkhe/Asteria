@@ -42,6 +42,10 @@ class RunMetrics:
         self._missed_measurement_frames: int = 0
         # Unbounded accumulators (scalars only — no O(N) risk)
         self._lock_frames: int = 0
+        # A lock is meaningful only while a real image measurement is
+        # eligible for tracking.  SEARCHING/ACQUIRING frames are not part of
+        # the retention denominator.
+        self._eligible_tracking_frames: int = 0
         self._total_frames: int = 0
         self._acquisition_time: Optional[float] = None
         self._acquisition_frame: Optional[int] = None
@@ -62,7 +66,7 @@ class RunMetrics:
         self,
         frame_time: float,
         processing_ms: float,
-        angular_error: float,
+        angular_error: Optional[float],
         confidence: float,
         target_state: str,
         simulation_elapsed: float,
@@ -73,7 +77,8 @@ class RunMetrics:
         self._total_frames += 1
         self._frame_times.append(frame_time)
         self._processing_times.append(processing_ms)
-        self._angular_errors.append(angular_error)
+        if angular_error is not None:
+            self._angular_errors.append(angular_error)
         # Tracking-phase pixel stats: only frames already in TRACKING/LOCKED
         # count toward tracking error (the acquisition slew is measured by
         # acquisition_time instead). This matches the PS169 separation of
@@ -91,11 +96,13 @@ class RunMetrics:
         self._confidences.append(confidence)
         self._target_states.append(target_state)
         # Maintain running max — O(1), no list scan
-        if angular_error > self._max_angular_error:
+        if angular_error is not None and angular_error > self._max_angular_error:
             self._max_angular_error = angular_error
 
         if target_state == 'LOCKED':
             self._lock_frames += 1
+        if measured and target_state in ('TRACKING', 'LOCKED'):
+            self._eligible_tracking_frames += 1
 
         if target_state in ('DETECTED', 'ACQUIRING', 'TRACKING', 'LOCKED'):
             if self._first_detection_time is None:
@@ -103,7 +110,11 @@ class RunMetrics:
 
         if target_state in ('TRACKING', 'LOCKED'):
             if self._acquisition_time is None:
-                self._acquisition_time = simulation_elapsed
+                # Acquisition starts at the first valid sensor measurement,
+                # not video decode, upload, or UI startup time.
+                self._acquisition_time = simulation_elapsed - (
+                    self._first_detection_time
+                    if self._first_detection_time is not None else simulation_elapsed)
 
         if target_state == 'LOST':
             self._lost_count += 1
@@ -204,8 +215,8 @@ class RunMetrics:
         avg_px, max_px = self._pixel_stats()
         avg_conf = sum(confs) / len(confs) if confs else 0.0
         avg_proc = sum(proc) / len(proc)
-        lock_ret = (self._lock_frames / self._total_frames * 100.0
-                    if self._total_frames > 0 else 0.0)
+        lock_ret = (self._lock_frames / self._eligible_tracking_frames * 100.0
+                    if self._eligible_tracking_frames > 0 else 0.0)
 
         elapsed = time.time() - self._start_time
         fps = self.current_fps()
@@ -245,7 +256,7 @@ class RunMetrics:
                 self._processing_times[-1] if self._processing_times else 0, 2),
             'detection_confidence': round(confs[-1] if confs else 0.0, 4),
             'lock_fraction': round(
-                self._lock_frames / max(self._total_frames, 1), 4),
+                self._lock_frames / max(self._eligible_tracking_frames, 1), 4),
             'acquisition_time': round(self._acquisition_time, 3)
                                 if self._acquisition_time else None,
             'average_error': round(
@@ -259,7 +270,7 @@ class RunMetrics:
             'avg_reacquisition_time': (
                 round(self._avg_reacq(), 3) if self._avg_reacq() is not None else None),
             'lock_retention': round(
-                self._lock_frames / max(self._total_frames, 1) * 100.0, 2),
+                self._lock_frames / max(self._eligible_tracking_frames, 1) * 100.0, 2),
             'ps169': self.ps169(),
         }
 

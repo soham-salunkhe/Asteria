@@ -182,6 +182,14 @@ function useSimulationState() {
   }, [refreshStatus]);
   const reset = useCallback(async () => {
     await fsocApi.resetSimulation();
+    // RESET TRACKING returns the UI to unmeasured state: drop the frozen
+    // run (metrics/events/history) so panels read '--' until a new run
+    // streams. Disturbance config is intentionally preserved (runtime
+    // state, not per-run metrics).
+    historyBuffer.current = [];
+    setLatest(null);
+    setHistory([]);
+    setEvents([]);
     await refreshStatus('idle');
   }, [refreshStatus]);
   const endDemo = useCallback(async () => {

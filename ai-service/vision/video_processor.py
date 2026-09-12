@@ -13,7 +13,8 @@ import time
 import uuid
 import math
 import numpy as np
-from typing import Callable, Awaitable, Optional
+from typing import Callable, Awaitable, Optional, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -35,6 +36,43 @@ from tracking_constants import (
 )
 
 
+@dataclass(frozen=True)
+class VideoFrame:
+    """A source frame with its sensor-clock timestamp, never UI time."""
+    index: int
+    timestamp: float
+    image: np.ndarray
+
+
+class VideoFileFrameSource:
+    """FrameSource adapter for MP4 input.
+
+    OpenCV decoding is deliberately decoupled from browser playback.  Every
+    decoded frame is yielded in order and receives its deterministic video
+    timestamp (frame index / stream FPS), including files whose container
+    timestamp metadata is incomplete.
+    """
+    def __init__(self, path: Path):
+        self._cap = cv2.VideoCapture(str(path))
+        if not self._cap.isOpened():
+            raise RuntimeError(f"Cannot open video: {path}")
+        self.fps = self._cap.get(cv2.CAP_PROP_FPS) or 30.0
+        self.frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self._index = 0
+
+    def __iter__(self) -> Iterator[VideoFrame]:
+        while True:
+            ret, image = self._cap.read()
+            if not ret:
+                return
+            timestamp = self._index / self.fps
+            yield VideoFrame(self._index + 1, timestamp, image)
+            self._index += 1
+
+    def close(self) -> None:
+        self._cap.release()
+
+
 class VideoProcessor:
     """
     Processes an uploaded video file through the FSOC tracking pipeline.
@@ -51,8 +89,11 @@ class VideoProcessor:
 
     def __init__(self):
         self._detector = create_detector(use_yolo=False)
+        # Same core tracking components (and tuning) as the live loop:
+        # KalmanFilter2D + PIDController with the shared defaults, so the
+        # benchmark exercises the real pipeline, not a video-only variant.
         self._kalman   = KalmanFilter2D(KalmanConfig(
-            process_noise_q=0.5,
+            process_noise_q=2.0,
             measurement_noise_r=5.0,
             initial_covariance=500.0,
         ))
@@ -68,6 +109,19 @@ class VideoProcessor:
     def set_broadcast(self, fn: Callable[[dict], Awaitable[None]]) -> None:
         self._broadcast = fn
 
+    def _emit_event(self, level: str, message: str) -> None:
+        self._events.append({
+            'id': str(uuid.uuid4()),
+            'timestamp': time.time(),
+            'level': level,
+            'message': message,
+        })
+
+    def _drain_events(self) -> list:
+        evts = list(self._events)
+        self._events = []
+        return evts
+
     async def process(self, video_path: str, scenario_name: Optional[str] = None) -> str:
         """
         Run the video through the PAT pipeline.
@@ -80,18 +134,16 @@ class VideoProcessor:
         if not path.exists():
             raise FileNotFoundError(f"Video file not found: {path}")
 
-        cap = cv2.VideoCapture(str(path))
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open video: {path}")
-
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        source = VideoFileFrameSource(path)
+        fps = source.fps
+        total_frames = source.frame_count
         dt = 1.0 / fps
 
         # Reset per-run state
         self._kalman.reset()
         self._pid.reset()
         self._metrics.reset()
+        self._events = []
         pan  = 0.0
         tilt = 0.0
         pan_rate  = 0.0
@@ -104,25 +156,34 @@ class VideoProcessor:
             scenario_name=run_name,
             env='video_input',
         )
+        self._emit_event('info', f'VIDEO PROCESSING STARTED — {run_name}')
+        self._emit_event('info', 'SEARCHING FOR BEACON…')
 
         frame_id  = 0
         elapsed   = 0.0
         target_state = 'SEARCHING'
+        prev_state = 'SEARCHING'
+        acq_started = False
         missed_frames = 0
         lock_count = 0
+        frame_log: list[tuple[dict, int]] = []
+        last_payload = None
 
-        LOST_THRESHOLD = int(fps * LOST_GRACE_SECONDS)
+        LOST_THRESHOLD = max(10, int(fps * LOST_GRACE_SECONDS))
+        # Coast horizon mirrors the live loop: ~1 s of Kalman-prediction
+        # coast after a dropout before the estimate is dropped.  A single
+        # missed video frame must never reset acquisition progress.
+        COAST_FRAMES = max(1, int(fps * 1.0))
 
         try:
-            while True:
-                ret, raw_frame = cap.read()
-                if not ret:
-                    break
-
+            for source_frame in source:
                 t0 = time.perf_counter()
                 now = time.time()
-                frame_id += 1
-                elapsed  += dt
+                frame_id = source_frame.index
+                # The tracking clock is the video sensor clock, not browser
+                # playback or decoding speed.
+                elapsed = source_frame.timestamp
+                raw_frame = source_frame.image
 
                 # ── Resize to camera resolution ─────────────────
                 h_orig, w_orig = raw_frame.shape[:2]
@@ -168,8 +229,12 @@ class VideoProcessor:
                 px_per_deg_v = self.CAMERA_H / FOV_V
 
                 if detection:
-                    use_x, use_y = detection.centroid_x, detection.centroid_y
-                    meas_px = math.sqrt((use_x - cx) ** 2 + (use_y - cy) ** 2)
+                    # Raw centroid error is the measured pixel error used by
+                    # reporting.  The controller may use the filtered state,
+                    # but never a fabricated measurement.
+                    meas_x, meas_y = detection.centroid_x, detection.centroid_y
+                    meas_px = math.sqrt((meas_x - cx) ** 2 + (meas_y - cy) ** 2)
+                    use_x, use_y = self._kalman.position
                 elif self._kalman.is_initialized:
                     use_x, use_y = pred_x, pred_y
                     meas_px = None
@@ -179,11 +244,16 @@ class VideoProcessor:
                 pan_err  = (use_x - cx) / px_per_deg_h
                 tilt_err = -(use_y - cy) / px_per_deg_v
                 total_err = math.sqrt(pan_err**2 + tilt_err**2)
-                pix_total = math.sqrt((use_x - cx) ** 2 + (use_y - cy) ** 2) \
-                    if (detection or self._kalman.is_initialized) else None
+                # Keep the measured image error separate from the filtered
+                # control error.  Benchmark pixel metrics are always based
+                # on the detector centroid, never prediction/filter output.
+                raw_err_x = (px - cx) if detection else None
+                raw_err_y = (py - cy) if detection else None
+                pix_total = meas_px if detection else None
 
                 # ── PID control ──────────────────────────────────
-                pid_out = self._pid.update(pan_err, tilt_err, dt)
+                pid_out = (self._pid.update(pan_err, tilt_err, dt) if detection
+                           else self._pid.coast())
                 pan  += pid_out['pan_correction']
                 tilt += pid_out['tilt_correction']
                 pan  = max(-180.0, min(180.0, pan))
@@ -191,7 +261,13 @@ class VideoProcessor:
                 pan_rate  = pid_out['pan_correction']  / dt if dt > 0 else 0
                 tilt_rate = pid_out['tilt_correction'] / dt if dt > 0 else 0
 
-                # ── State machine (pixel-based lock, never forced) ──
+                # ── State machine (same pixel-threshold semantics as the
+                # live loop: TRACKING/LOCKED mean on-target ≤10 px, so the
+                # benchmark pixel stats only ever cover genuine tracking.
+                # A lone missed frame coasts on the Kalman prediction and
+                # never resets acquisition progress; LOST fires only after
+                # the grace period.  LOCKED still needs LOCK_FRAMES_REQUIRED
+                # consecutive raw-centroid frames — never forced.
                 if detection and meas_px is not None:
                     if meas_px <= TARGET_LOCK_THRESHOLD_PX:
                         lock_count += 1
@@ -207,18 +283,54 @@ class VideoProcessor:
                         target_state = 'DETECTED'
                 else:
                     lock_count = 0
+                    # Coast-to-dropout handover, mirroring the live loop:
+                    # after ~1 s without measurements the Kalman prediction
+                    # is stale — drop it instead of chasing it forever.
+                    if (missed_frames > COAST_FRAMES
+                            and self._kalman.is_initialized):
+                        self._kalman.reset()
+                        self._pid.reset()
                     if missed_frames > LOST_THRESHOLD:
                         target_state = 'LOST'
+                        missed_frames = 0
+                        self._kalman.reset()  # stale estimate is worthless
+                        self._pid.reset()     # avoid windup-driven re-loss
                     elif target_state in ('LOCKED', 'TRACKING', 'ACQUIRING', 'DETECTED'):
                         target_state = 'REACQUIRING'
                     else:
                         target_state = 'SEARCHING'
 
+                # ── Transition events (emitted on change only, mirroring
+                # the live loop so the Event Log corroborates the metrics) ──
+                if target_state != prev_state:
+                    if target_state == 'ACQUIRING' and not acq_started:
+                        acq_started = True
+                        self._emit_event('info', 'ACQUISITION STARTED')
+                    state_events = {
+                        'SEARCHING': ('info', 'SEARCHING FOR BEACON'),
+                        'DETECTED': ('info', 'BEACON DETECTED'),
+                        'ACQUIRING': ('info', 'TARGET ACQUIRING'),
+                        'TRACKING': ('success', 'TRACKING STARTED'),
+                        'LOCKED': ('success', 'LOCK ACQUIRED — ERROR ≤ 10 PX'),
+                        'LOST': ('warning', 'TARGET LOST'),
+                        'REACQUIRING': ('warning', 'REACQUISITION STARTED'),
+                    }
+                    if target_state in state_events:
+                        lvl, msg = state_events[target_state]
+                        self._emit_event(lvl, msg)
+                    if prev_state in ('READY', 'SEARCHING', 'DETECTED', 'ACQUIRING') \
+                            and target_state == 'TRACKING':
+                        self._emit_event('success', 'ACQUISITION COMPLETE')
+                    if prev_state in ('REACQUIRING', 'LOST') \
+                            and target_state in ('TRACKING', 'LOCKED'):
+                        self._emit_event('success', 'BEACON REACQUIRED — TRACKING RESUMED')
+                    prev_state = target_state
+
                 # ── Metrics ──────────────────────────────────────
                 t1 = time.perf_counter()
                 processing_ms = (t1 - t0) * 1000.0
                 self._metrics.update(
-                    frame_time=now,
+                    frame_time=elapsed,
                     processing_ms=processing_ms,
                     angular_error=total_err,
                     confidence=confidence if detected else 0.0,
@@ -227,32 +339,6 @@ class VideoProcessor:
                     pixel_error=round(meas_px, 3) if meas_px is not None else None,
                     measured=detected,
                 )
-
-                # ── DB sample (every 5 frames) ───────────────────
-                if frame_id % 5 == 0 and self._run_id:
-                    try:
-                        db.save_telemetry_sample(self._run_id, {
-                            'timestamp': now,
-                            'camera': {
-                                'pan': round(pan, 3),
-                                'tilt': round(tilt, 3),
-                                'pan_rate': round(pan_rate, 3),
-                                'tilt_rate': round(tilt_rate, 3),
-                                'fov_h': FOV_H,
-                                'fov_v': FOV_V,
-                                'timestamp': now,
-                            },
-                            'angular_error': {
-                                'pan_error': round(pan_err, 4),
-                                'tilt_error': round(tilt_err, 4),
-                                'total_error': round(total_err, 4),
-                            },
-                            'metrics': self._metrics.frame_metrics(),
-                            'kalman': kal_dict,
-                            'target_state': target_state,
-                        }, frame_id)
-                    except Exception:
-                        pass  # non-fatal
 
                 # ── Broadcast telemetry ──────────────────────────
                 frame_metrics = self._metrics.frame_metrics()
@@ -285,9 +371,11 @@ class VideoProcessor:
                         'detection': det_dict,
                         'kalman': kal_dict,
                         'pixel_error': {
-                            'x': round(use_x - cx, 2),
-                            'y': round(use_y - cy, 2),
+                            'x': round(raw_err_x, 2) if raw_err_x is not None else None,
+                            'y': round(raw_err_y, 2) if raw_err_y is not None else None,
                             'total': round(pix_total, 2) if pix_total is not None else None,
+                            'centroid_x': round(px, 2) if detected else None,
+                            'centroid_y': round(py, 2) if detected else None,
                         },
                         'angular_error': {
                             'pan_error': round(pan_err, 4),
@@ -305,7 +393,7 @@ class VideoProcessor:
                             'config': {},
                         },
                         'metrics': frame_metrics,
-                        'events': [],
+                        'events': self._drain_events(),
                     },
                 }
 
@@ -315,16 +403,37 @@ class VideoProcessor:
                     except Exception:
                         pass
 
+                # A complete per-frame log is flushed after processing so
+                # SQLite commits cannot distort measured pipeline latency.
+                if self._run_id:
+                    frame_log.append((telemetry['payload'], frame_id))
+                last_payload = telemetry['payload']
+
                 # ── Pace to match video FPS ──────────────────────
                 loop_time = time.perf_counter() - t0
                 await asyncio.sleep(max(0.0, dt - loop_time))
 
         finally:
-            cap.release()
+            source.close()
             # Finalise run
+            self._emit_event('info',
+                             f'VIDEO PROCESSING COMPLETE — {frame_id} FRAMES, FINAL STATE {target_state}')
+            # Settle the UI: one final frame carrying the completion event
+            # and closing metrics, with an idle status so controls offer a
+            # fresh run instead of freezing on 'running'.
+            if self._broadcast and last_payload is not None:
+                try:
+                    final_payload = dict(last_payload)
+                    final_payload['sim_status'] = 'idle'
+                    final_payload['metrics'] = self._metrics.frame_metrics()
+                    final_payload['events'] = self._drain_events()
+                    await self._broadcast({'type': 'telemetry', 'payload': final_payload})
+                except Exception:
+                    pass
             if self._run_id:
                 summary = self._metrics.summary()
                 try:
+                    db.save_telemetry_samples(self._run_id, frame_log)
                     db.complete_run(self._run_id, summary, target_state, 'completed')
                 except Exception:
                     pass

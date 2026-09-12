@@ -125,9 +125,23 @@ class SimulationEngine:
     TARGET_UNLOCK_PX = _TUL_PX
     LOCK_FRAMES_REQUIRED = _LFR          # stable frames before LOCKED
     ACQUIRING_THRESHOLD_PX = _ACQ_PX     # pixels — DETECTED→ACQUIRING boundary
-    # Widened sweep so targets placed anywhere in ±60° are reachable
-    SEARCH_SWEEP_AMP = 60.0              # degrees, SEARCHING sweep amplitude
-    SEARCH_SWEEP_RATE = 0.18             # rad/s — covers full arc in ~5 s
+    # Expanding search sweep: dense local scan around the episode anchor
+    # first (fast nearby acquisition), growing to full-sphere coverage so a
+    # beacon anywhere - including behind the camera - is swept through the
+    # FOV. Open-loop and deterministic: no beacon knowledge, no lookAt, no
+    # teleport; detection stays purely image-based. Pan is a triangle wave
+    # advancing at a CONSTANT rate below the slew limit, so the camera truly
+    # traverses the commanded amplitude; tilt holds centre-out elevation
+    # dwells (one full pan revolution each) for systematic raster coverage.
+    SEARCH_SWEEP_MIN_PAN = 8.0    # degrees, initial local-scan amplitude
+    SEARCH_SWEEP_MAX_PAN = 180.0  # degrees, full rotation at full expansion
+    SEARCH_SWEEP_PAN_RAMP_S = 30.0  # seconds from local scan to full pan
+    SEARCH_SWEEP_PAN_SLEW = 4.0   # deg/s pan pattern rate (< 5 deg/s limit)
+    SEARCH_SWEEP_TILT_STEPS = (0.0, 3.0, -3.0, 6.0, -6.0, 9.0, -9.0,
+                               12.0, -12.0, 15.0, -15.0, 18.0, -18.0,
+                               21.0, -21.0, 24.0, -24.0, 27.0, -27.0,
+                               30.0, -30.0, 33.0, -33.0, 36.0, -36.0,
+                               39.0, -39.0, 42.0, -42.0, 45.0, -45.0)
     LOST_GRACE_SECONDS = _LGS
     REACQUIRE_TIMEOUT_SECONDS = _RTS
 
@@ -180,6 +194,7 @@ class SimulationEngine:
         self._missed_frames = 0
         self._lock_count = 0
         self._search_t = 0.0
+        self._search_phase = 0.0
         # Expanding-sweep anchor: last-known pointing at episode start.
         self._search_pan0 = 0.0
         self._search_tilt0 = 0.0
@@ -252,6 +267,15 @@ class SimulationEngine:
             'beacon_id': beacon_id,
         }
         self._emit_event('info', f'TARGET CREATED — {target_id}')
+
+        if self._broadcast and not self._running:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._send_stop_telemetry(scenario_reset=False))
+            except Exception:
+                pass
         
         return {
             'success': True,
@@ -467,7 +491,7 @@ class SimulationEngine:
                     'camera': self._camera.state_dict(now),
                     'detection': None,
                     'kalman': None,
-                    'angular_error': {'pan_error': 0.0, 'tilt_error': 0.0, 'total_error': 0.0},
+                    'angular_error': {'pan_error': None, 'tilt_error': None, 'total_error': None},
                     'pid_output': {},
                     'disturbance': {},
                     'metrics': {},
@@ -750,17 +774,21 @@ class SimulationEngine:
         self._lost_frames_threshold = max(10, int(fps * self.LOST_GRACE_SECONDS))
         self._coast_frames = max(1, int(fps * 1.0))
 
-        # ── Slew camera toward the new target's angular position ─────
-        # This prevents the sweep from starting at the wrong boresight.
-        beacon_pos = self._effective_beacon_pos()
-        pan_err, tilt_err = self._camera.angular_error_to_target(beacon_pos)
-        # Snap directly to pointing at the target so acquisition can begin
-        # immediately rather than after a full sweep cycle.  The PID still
-        # closes the residual error smoothly on subsequent frames.
-        self._camera.apply_correction(pan_err, tilt_err, 1.0)
-        # Anchor the sweep on the newly slewed pointing direction.
+        # ── Open-loop search starting from current gimbal orientation ─────
+        # The tracker never receives ground-truth coordinates or camera.lookAt/teleport.
+        # It physically sweeps PAN/TILT in SEARCHING until the beacon enters FOV.
         self._search_pan0 = self._camera.pan
-        self._search_tilt0 = self._camera.tilt
+        self._search_tilt0 = 0.0
+        self._search_phase = 0.0
+
+        if self._broadcast and not self._running:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(self._send_stop_telemetry(scenario_reset=False))
+            except Exception:
+                pass
 
         if hasattr(self._detector, 'set_target'):
             self._detector.set_target(
@@ -802,12 +830,9 @@ class SimulationEngine:
         self._target_state = 'SEARCHING'
         self._kalman.reset()
         self._pid.reset()
-        # Re-slew camera toward current target position
-        beacon_pos = self._effective_beacon_pos()
-        pan_err, tilt_err = self._camera.angular_error_to_target(beacon_pos)
-        self._camera.apply_correction(pan_err, tilt_err, 1.0)
+        # Open-loop search anchors at current camera pan/tilt without teleporting orientation
         self._search_pan0 = self._camera.pan
-        self._search_tilt0 = self._camera.tilt
+        self._search_tilt0 = 0.0
         fps = float(getattr(self._camera.config, 'fps', 60.0))
         self._lost_frames_threshold = max(10, int(fps * self.LOST_GRACE_SECONDS))
         self._coast_frames = max(1, int(fps * 1.0))
@@ -1022,10 +1047,11 @@ class SimulationEngine:
                 pix_total = math.sqrt(pix_err_x ** 2 + pix_err_y ** 2)
                 pan_err = pix_err_x * (cam_cfg.fov_h / img_w)
                 tilt_err = -pix_err_y * (cam_cfg.fov_v / img_h)
+                total_err = math.sqrt(pan_err**2 + tilt_err**2)
             else:
                 pix_err_x, pix_err_y, pix_total = None, None, None
-                pan_err, tilt_err = 0.0, 0.0
-            total_err = math.sqrt(pan_err**2 + tilt_err**2)
+                pan_err, tilt_err = None, None
+                total_err = None
 
             pixel_err_dict = {
                 'x': round(pix_err_x, 2) if pix_err_x is not None else None,
@@ -1065,19 +1091,30 @@ class SimulationEngine:
             else:
                 # No measurement and no estimate: expanding search sweep,
                 # slew-rate limited like every other camera motion.
-                # Centred on the last-known pointing direction: it starts as
-                # a dense local scan (highest posterior probability) and
-                # expands to the full ±60°/±20° envelope over ~25 s.
-                # Zero phase offset so it starts at the centre, not off-axis.
+                # Centred on the episode anchor (set once per acquisition
+                # episode, never mid-episode): dense local scan first for
+                # fast nearby acquisition, growing to full-sphere coverage
+                # so behind-camera beacons are swept through the FOV too.
+                # The pan pattern is a triangle wave advancing at a constant
+                # angular rate below the slew limit, so the camera genuinely
+                # traverses the commanded amplitude. Tilt holds centre-out
+                # elevation dwells, one full pan revolution each: every
+                # azimuth is scanned at a known elevation before stepping
+                # on. Blind open-loop pattern — no beacon knowledge is used.
                 pid_out = self._pid.coast()
                 self._search_t += dt
-                ramp = min(1.0, self._search_t / 90.0)
-                pan_amp = 8.0 + (self.SEARCH_SWEEP_AMP - 8.0) * ramp
-                tilt_amp = 3.0 + (20.0 - 3.0) * ramp
-                sweep_pan = (self._search_pan0 + pan_amp * math.sin(
-                    self.SEARCH_SWEEP_RATE * self._search_t))
+                ramp = min(1.0, self._search_t / self.SEARCH_SWEEP_PAN_RAMP_S)
+                pan_amp = (self.SEARCH_SWEEP_MIN_PAN + (self.SEARCH_SWEEP_MAX_PAN
+                           - self.SEARCH_SWEEP_MIN_PAN) * ramp)
+                self._search_phase += (dt * (math.pi / 2.0)
+                                       * (self.SEARCH_SWEEP_PAN_SLEW
+                                          / max(pan_amp, 1.0)))
+                tri_pan = (math.asin(max(-1.0, min(1.0, math.sin(self._search_phase))))
+                           * (2.0 / math.pi))
+                dwell = int(self._search_phase // (2.0 * math.pi)) % len(self.SEARCH_SWEEP_TILT_STEPS)
+                sweep_pan = self._search_pan0 + pan_amp * tri_pan
                 sweep_tilt = (self._search_tilt0
-                              + tilt_amp * math.sin(0.12 * self._search_t))
+                              + self.SEARCH_SWEEP_TILT_STEPS[dwell])
                 self._slew_toward(sweep_pan, sweep_tilt, dt)
 
             # ── State machine (detection + pixel error) ────────
@@ -1107,9 +1144,9 @@ class SimulationEngine:
                     'timestamp': now,
                     'camera': self._camera.state_dict(now),
                     'angular_error': {
-                        'pan_error': round(pan_err, 4),
-                        'tilt_error': round(tilt_err, 4),
-                        'total_error': round(total_err, 4),
+                        'pan_error': round(pan_err, 4) if pan_err is not None else None,
+                        'tilt_error': round(tilt_err, 4) if tilt_err is not None else None,
+                        'total_error': round(total_err, 4) if total_err is not None else None,
                     },
                     'centroiding_error': centroid_err_dict,
                     'metrics': frame_metrics,
@@ -1146,9 +1183,9 @@ class SimulationEngine:
                     'detection': det_dict,
                     'kalman': kal_dict,
                     'angular_error': {
-                        'pan_error': round(pan_err, 4),
-                        'tilt_error': round(tilt_err, 4),
-                        'total_error': round(total_err, 4),
+                        'pan_error': round(pan_err, 4) if pan_err is not None else None,
+                        'tilt_error': round(tilt_err, 4) if tilt_err is not None else None,
+                        'total_error': round(total_err, 4) if total_err is not None else None,
                     },
                     'pid_output': pid_out,
                     'disturbance': dist_state,
@@ -1207,14 +1244,14 @@ class SimulationEngine:
                 self._kalman.reset()
                 self._pid.reset()
             if self._missed_frames > self._lost_frames_threshold:
-                # LOST fires ONCE per loss episode (from a tracking/search
-                # state). While already in LOST/REACQUIRING the sweep keeps
-                # running with a monotonically advancing phase — resetting
-                # _search_t here would restart the Lissajous every grace
-                # period and the camera would never scan past the sweep's
-                # initial segment.
-                if prev in ('LOST', 'REACQUIRING'):
-                    new = 'REACQUIRING'
+                # One acquisition episode = one expanding sweep with a fixed
+                # anchor and monotonically advancing phase/dwells. Restarting
+                # mid-episode would trap the scan in the small-amplitude
+                # regime (and random-walk the anchor), so a beacon outside
+                # the initial segment — e.g. behind the camera — could never
+                # be found. Only a FRESH loss re-anchors and restarts.
+                if prev in ('LOST', 'REACQUIRING', 'SEARCHING'):
+                    new = prev
                     self._missed_frames = 0
                 else:
                     new = 'LOST'
@@ -1224,7 +1261,7 @@ class SimulationEngine:
                     # Fresh loss episode: anchor the expanding sweep on the
                     # last-known pointing and restart it as a local scan.
                     self._search_pan0 = self._camera.pan
-                    self._search_tilt0 = self._camera.tilt
+                    self._search_tilt0 = 0.0
                     self._search_t = 0.0
                     self._reacquire_start_time = self._elapsed
             elif prev in ('LOST', 'REACQUIRING'):
@@ -1331,14 +1368,17 @@ class SimulationEngine:
                 period=tc.get('period', 18.0),
             ))
         else:
-            self._target = Target(DEFAULT_TARGET)
+            if DEFAULT_TARGET.id not in self._targets:
+                self._target = Target(DEFAULT_TARGET)
+            else:
+                self._target = self._targets[DEFAULT_TARGET.id]
         # A scenario may supply a named target; keep its explicit relationship
         # in the same registry used by the renderer and tracking controller.
         configured_link = self._target_links.get(self._target.config.id)
         if configured_link is None:
             beacon_id = (config.get('target') or {}).get('beacon_id')
             if not beacon_id:
-                raise ValueError(f'[ASTERIA STATE ERROR] target {self._target.config.id} requires beacon_id')
+                beacon_id = f'BEACON-{self._target.config.id.split("-")[-1]}'
             self._target_links[self._target.config.id] = {
                 'satellite_id': (config.get('target') or {}).get('satellite_id', 'SAT-01'),
                 'camera_id': (config.get('target') or {}).get('camera_id', 'FSOC-CAM-01'),
@@ -1348,6 +1388,7 @@ class SimulationEngine:
         self._target_offset = Vec3(0.0, 0.0, 0.0)
         self._lock_count = 0
         self._search_t = 0.0
+        self._search_phase = 0.0
         self._acq_started = False
         # Detector labels/spot-size follow the configured beacon
         if hasattr(self._detector, 'set_target'):
@@ -1474,6 +1515,9 @@ class SimulationEngine:
         self._target.reset()
         if self._secondary_target:
             self._secondary_target.reset()
+        for t in self._targets.values():
+            if t is not self._target:
+                t.reset()
         self._camera.reset()
         self._disturbances.reset()
         self._kalman.reset()
@@ -1486,6 +1530,7 @@ class SimulationEngine:
         self._missed_frames = 0
         self._lock_count = 0
         self._search_t = 0.0
+        self._search_phase = 0.0
         self._search_pan0 = 0.0
         self._search_tilt0 = 0.0
         self._acq_started = False

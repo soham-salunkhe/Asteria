@@ -540,10 +540,24 @@ export function CameraFeed({
 
     // TOP-LEFT — target state
     ctx.fillStyle = 'rgba(4,12,10,0.82)';
-    ctx.fillRect(8, 8, 196, 22);
+    ctx.fillRect(8, 8, 196, frame?.detection ? 64 : 22);
     ctx.fillStyle = stateColor;
     ctx.font = hudFontB;
     ctx.fillText(`● ${state}`, 14, 23);
+    // The video path's validation data is deliberately shown from the same
+    // telemetry values that drove Kalman/PID, not from a synthetic target.
+    if (frame?.detection) {
+      const c = frame.detection.centroid;
+      const e = frame.pixel_error;
+      ctx.font = hudFontSm;
+      ctx.fillStyle = '#8a9ba0';
+      ctx.fillText(`CENTROID  X:${c.x.toFixed(1)}  Y:${c.y.toFixed(1)}`, 14, 37);
+      ctx.fillText('IMG CTR   X:320.0  Y:240.0', 14, 49);
+      ctx.fillStyle = '#9fd8e8';
+      const ex = e?.x != null ? e.x.toFixed(1) : '—';
+      const ey = e?.y != null ? e.y.toFixed(1) : '—';
+      ctx.fillText(`ERROR     X:${ex}  Y:${ey} px`, 14, 61);
+    }
 
     // TOP-RIGHT — mission ID
     ctx.fillStyle = 'rgba(4,12,10,0.82)';

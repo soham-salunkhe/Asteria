@@ -84,19 +84,19 @@ export function CameraControlPage() {
           <div className="cam-control-block">
             <div className="cam-axis-header">
               <span className="cam-axis-label">TILT</span>
-              <span className="cam-axis-range">−90° → +90°</span>
+              <span className="cam-axis-range">−89° → +89°</span>
               <span className="cam-axis-current">{currentTilt.toFixed(2)}°</span>
             </div>
             <div className="cam-slider-track">
-              <span className="cam-slider-tick">−90°</span>
+              <span className="cam-slider-tick">−89°</span>
               <input
                 type="range"
-                min={-90} max={90} step={0.1}
+                min={-89} max={89} step={0.1}
                 value={tilt}
                 onChange={e => setTilt(Number(e.target.value))}
                 className="cam-slider"
               />
-              <span className="cam-slider-tick">+90°</span>
+              <span className="cam-slider-tick">+89°</span>
             </div>
             <div className="cam-slider-val">{tilt.toFixed(1)}°</div>
           </div>
@@ -104,7 +104,7 @@ export function CameraControlPage() {
           {/* D-pad controls */}
           <div className="cam-dpad">
             <button className="cam-dpad-btn cam-dpad-up"
-              onClick={() => { const v = tilt + 1; setTilt(Math.min(90, v)); }}>
+              onClick={() => { const v = tilt + 1; setTilt(Math.min(89, v)); }}>
               ↑
             </button>
             <div className="cam-dpad-middle">
@@ -122,7 +122,7 @@ export function CameraControlPage() {
               </button>
             </div>
             <button className="cam-dpad-btn cam-dpad-down"
-              onClick={() => { const v = tilt - 1; setTilt(Math.max(-90, v)); }}>
+              onClick={() => { const v = tilt - 1; setTilt(Math.max(-89, v)); }}>
               ↓
             </button>
           </div>
