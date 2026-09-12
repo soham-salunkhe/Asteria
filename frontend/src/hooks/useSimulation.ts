@@ -90,6 +90,9 @@ function useSimulationState() {
   // Throttle history updates to avoid excess re-renders
   const historyBuffer = useRef<TelemetryFrame[]>([]);
   const flushTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Ignore an out-of-order telemetry callback from a superseded target session.
+  // The backend increments this ID whenever TRACK TARGET resolves a new graph.
+  const latestTrackingSessionId = useRef(0);
   // Status override from REST after control actions (stop/pause/reset).
   // Needed because the backend loop exits on STOP, so no fresh telemetry
   // arrives and `latest.sim_status` would otherwise stay frozen at 'running'.
@@ -98,8 +101,17 @@ function useSimulationState() {
 
   // Connect on mount
   useEffect(() => {
+    // Runtime entities are intentionally ephemeral. A full browser reload is
+    // a fresh ASTERIA session, so discard any entities held by the backend
+    // singleton before attaching the live telemetry subscription.
+    void fsocApi.endDemo().catch((error) => {
+      console.warn('Unable to initialise a clean simulation session', error);
+    });
     simulationWS.connect(
       (frame) => {
+        const sessionId = frame.tracking_session?.id;
+        if (sessionId !== undefined && sessionId < latestTrackingSessionId.current) return;
+        if (sessionId !== undefined) latestTrackingSessionId.current = sessionId;
         setLatest(frame);
         setStatusOverride(null);
         // Reconcile the authoritative disturbance mirror with the backend
@@ -172,6 +184,13 @@ function useSimulationState() {
     await fsocApi.resetSimulation();
     await refreshStatus('idle');
   }, [refreshStatus]);
+  const endDemo = useCallback(async () => {
+    await fsocApi.endDemo();
+    historyBuffer.current = [];
+    setHistory([]);
+    setEvents([]);
+    setStatusOverride('idle');
+  }, []);
 
   // Write-through update: mirror locally first (instant UI feedback,
   // survives navigation), then push to the backend engine. The next
@@ -219,6 +238,7 @@ function useSimulationState() {
     stop,
     pause,
     reset,
+    endDemo,
     updateDisturbanceConfig,
     updateDisturbances,
     updatePID,

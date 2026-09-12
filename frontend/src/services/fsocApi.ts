@@ -5,6 +5,7 @@
  */
 
 const FSOC_API = import.meta.env.VITE_FSOC_API_URL ?? '';
+import type { SimulationEntity, TrackingSession } from '../types/fsoc';
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${FSOC_API}${path}`, {
@@ -35,6 +36,7 @@ export const fsocApi = {
   stopSimulation: () => post('/api/simulation/stop'),
   pauseSimulation: () => post('/api/simulation/pause'),
   resetSimulation: () => post('/api/simulation/reset'),
+  endDemo: () => post('/api/simulation/end_demo'),
 
   getStatus: () =>
     get<{ status: string; run_id: string | null }>('/api/simulation/status'),
@@ -66,11 +68,18 @@ export const fsocApi = {
     velocity?: { x: number; y: number; z: number };
     trajectory?: string;
     beacon_offset?: { x: number; y: number; z: number };
+    satellite_id?: string;
+    camera_id?: string;
   }) => post<{ success: boolean; target_id: string }>('/api/simulation/switch_target', data),
 
   // Force reacquisition for the current target from any state (including LOST)
   reacquire: () =>
     post<{ success: boolean; target_id: string }>('/api/simulation/reacquire'),
+
+  // Operator manual move of ONE registered target (gizmo/panel). Only that
+  // target's trajectory anchor changes; beacon follows, FSOC reacts via loop.
+  moveTarget: (targetId: string, position: { x: number; y: number; z: number }) =>
+    post<{ success: boolean; target_id: string }>('/api/simulation/move_target', { target_id: targetId, position }),
 
   // Entity registration
   registerTarget: (targetId: string, config?: unknown) =>
@@ -83,7 +92,7 @@ export const fsocApi = {
     post<{ success: boolean; satellite_id: string; camera_id: string }>('/api/simulation/register_satellite', { satellite_id: satelliteId, camera_id: cameraId }),
 
   getEntityRegistry: () =>
-    get<{ targets: string[]; cameras: string[]; satellites: string[]; active_target: string | null; active_camera: string | null }>('/api/simulation/entity_registry'),
+    get<{ targets: string[]; cameras: string[]; satellites: string[]; entities: SimulationEntity[]; active_target: string | null; active_camera: string | null; active_tracking_session: TrackingSession | null }>('/api/simulation/entity_registry'),
 
   // Scenarios
   createScenario: (data: unknown) => post('/api/scenarios', data),

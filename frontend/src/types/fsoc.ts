@@ -57,10 +57,39 @@ export interface TargetState3D {
   is_primary?: boolean;
   /** Beacon spot geometry driving the synthetic camera image */
   beacon?: {
+    id?: string;
+    type?: 'beacon';
+    parentTargetId?: string;
     size_px: number;
     shape: string;
     intensity: number;
   };
+  entity?: {
+    id: string;
+    type: 'target';
+    beaconId: string;
+    hostSatelliteId: string;
+  };
+}
+
+export type SimulationEntityType = 'satellite' | 'fsoc_camera' | 'target' | 'beacon';
+
+export interface SimulationEntity {
+  id: string;
+  type: SimulationEntityType;
+  name: string;
+  beaconId?: string;
+  parentTargetId?: string;
+  hostSatelliteId?: string;
+  cameraId?: string;
+}
+
+export interface TrackingSession {
+  id: number;
+  targetId: string;
+  beaconId: string;
+  satelliteId: string;
+  cameraId: string;
 }
 
 // ── Camera ────────────────────────────────────────────────────
@@ -262,6 +291,9 @@ export interface TelemetryFrame {
   target: TargetState3D;
   /** Multiple targets when multi-target mode is active */
   targets?: TargetState3D[];
+  tracking_session?: TrackingSession | null;
+  /** True only for the non-destructive-control → clean-scenario transition. */
+  scenario_reset?: boolean;
   /** Centroiding pixel errors */
   centroiding_error?: CentroidingError;
   camera: CameraState;

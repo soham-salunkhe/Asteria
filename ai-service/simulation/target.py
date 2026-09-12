@@ -55,7 +55,7 @@ class Vec3:
 
 @dataclass
 class TargetConfig:
-    id: str = 'BEACON-01'
+    id: str = 'TARGET-01'
     initial_position: Vec3 = field(default_factory=lambda: Vec3(100.0, 50.0, 200.0))
     velocity: Vec3 = field(default_factory=lambda: Vec3(2.0, 0.5, 0.0))
     trajectory: TrajectoryType = 'sinusoidal'
@@ -202,6 +202,15 @@ class Target:
             'image_position': {'x': 0.0, 'y': 0.0},  # filled by camera
             'timestamp': timestamp,
         }
+
+    def relocate(self, x: float, y: float, z: float) -> None:
+        """Operator manual move: re-anchor the trajectory origin and place
+        the target there immediately. Clock/phase/velocity are preserved so
+        motion continues seamlessly from the new anchor. Only this target
+        is affected; beacons follow automatically via beacon_offset."""
+        self._origin = Vec3(x, y, z)
+        self._position = Vec3(x, y, z)
+        self.config.initial_position = Vec3(x, y, z)
 
     def reset(self) -> None:
         self._position = Vec3(self.config.initial_position.x,

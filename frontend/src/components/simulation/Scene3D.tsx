@@ -12,18 +12,18 @@
  *   Target motion → virtual camera → 2D feed → detection → Kalman →
  *   pan/tilt controller → virtual camera orientation → updated 3D FOV.
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html, Line, OrbitControls, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { fsocApi } from '../../services/fsocApi';
-import type { TelemetryFrame } from '../../types/fsoc';
+import type { SimulationEntity, TelemetryFrame } from '../../types/fsoc';
 
 // ── World constants (unchanged mapping) ──────────────────────────
 const WORLD_SCALE = 0.008;
 const SAT_A_POSITION: [number, number, number] = [0.15, 0.1, 0.15];
-const EARTH_POSITION: [number, number, number] = [-2.55, -0.7, -2.15];
-const EARTH_RADIUS = 1.55;
+const EARTH_POSITION: [number, number, number] = [-2.8, -0.9, -2.45];
+const EARTH_RADIUS = 1.28;
 const SCENE_BG = '#101a29'; // deep-space navy — dark, but objects stay distinguishable
 const DEFAULT_TARGET: [number, number, number] = [0.15 + 120 * WORLD_SCALE, 0.1 + 60 * WORLD_SCALE, 0.15 + 350 * WORLD_SCALE];
 
@@ -34,10 +34,15 @@ type LocalKind = 'target' | 'satellite';
 interface SceneObjectDef {
   id: string;
   kind: LocalKind;
+  type: LocalKind;
   label: string;
   displayLabel: string;
   hostId: string;
   beaconId: string;
+  /** User-facing name only; IDs and type relationships remain immutable. */
+  beaconLabel: string;
+  /** Stable camera relationship for target → host satellite → camera resolution. */
+  cameraId: string;
   trackingState: 'IDLE' | 'TRACKING' | 'LOCKED' | 'LOST';
   base: V3; // spawn anchor — motion is applied as an offset on top
   rotation: V3;
@@ -502,20 +507,24 @@ function Beacon({ color = '#bfe6ff', scale = 1 }: { color?: string; scale?: numb
 // SAT-01 does NOT move — only the rig's pan/tilt rotation changes.
 function VirtualFsocRig({
   frame,
-  liveId,
+  cameraId,
+  hostPosition,
   targetPosition,
   beaconWorldPos,
   showFov,
   showLabels,
   reportPosition,
+  onSelect,
 }: {
   frame: TelemetryFrame | null;
-  liveId: string;
+  cameraId: string;
+  hostPosition: V3;
   targetPosition: V3;
   beaconWorldPos: V3;   // world position of the ACTIVE beacon (drives FOV line-of-sight)
   showFov: boolean;
   showLabels: boolean;
   reportPosition: (id: string, p: V3) => void;
+  onSelect: (id: string) => void;
 }) {
   const pan = frame?.camera.pan ?? 0;
   const tilt = frame?.camera.tilt ?? 0;
@@ -536,8 +545,8 @@ function VirtualFsocRig({
 
   useEffect(() => {
     // Report the live target position so NavRig FOLLOW/FOCUS can track it.
-    reportPosition(liveId, targetPosition);
-  }, [targetPosition, reportPosition, liveId]);
+    reportPosition(cameraId, [hostPosition[0] + fsocAperture[0], hostPosition[1] + fsocAperture[1], hostPosition[2] + fsocAperture[2]]);
+  }, [targetPosition, reportPosition, cameraId, hostPosition]);
 
   const halfH = THREE.MathUtils.degToRad(fovH / 2);
   const halfV = THREE.MathUtils.degToRad(fovV / 2);
@@ -575,16 +584,16 @@ function VirtualFsocRig({
   // <group> is positioned at SAT_A_POSITION).
   const fsocAperture: V3 = [0, 0.22, 0]; // aperture position in SAT-01's local frame
   const toBeacon: V3 = [
-    beaconWorldPos[0] - SAT_A_POSITION[0],
-    beaconWorldPos[1] - SAT_A_POSITION[1],
-    beaconWorldPos[2] - SAT_A_POSITION[2],
+    beaconWorldPos[0] - hostPosition[0],
+    beaconWorldPos[1] - hostPosition[1],
+    beaconWorldPos[2] - hostPosition[2],
   ];
 
   return (
-    <group position={SAT_A_POSITION}>
+    <group position={hostPosition}>
       {/* Virtual tracking camera body — rotates with telemetry pan/tilt.
           SAT-01 itself is stationary; only rigRef rotates. */}
-      <group ref={rigRef} position={fsocAperture}>
+      <group ref={rigRef} position={fsocAperture} onClick={(e) => { e.stopPropagation(); onSelect(cameraId); }}>
         <mesh>
           <boxGeometry args={[0.16, 0.1, 0.22]} />
           <meshStandardMaterial color="#5a6666" metalness={0.8} roughness={0.3} />
@@ -617,9 +626,8 @@ function VirtualFsocRig({
           </group>
         )}
       </group>
-      {showLabels && <ObjLabel text="FSOC-CAM-01" color="#9fd8e8" offset={0.62} />}
-      {/* Dashed line-of-sight from FSOC aperture to active beacon */}
-      <Line points={[fsocAperture, toBeacon]} color="#7fa895" lineWidth={0.5} transparent opacity={0.4} dashed dashSize={0.05} gapSize={0.05} />
+      {showLabels && <ObjLabel text={`${cameraId} · CAMERA`} color="#9fd8e8" offset={0.62} />}
+      {/* Optical link is shown only while acquisition/tracking is meaningful. */}
       {linkActive && (
         <Line
           points={[fsocAperture, toBeacon]}
@@ -656,6 +664,111 @@ function TrajectoryLine({ history, visible }: { history: TelemetryFrame[]; visib
 // When the target moves or rotates, the beacon inherits both transforms
 // automatically because it is a child of the same groupRef.
 const BEACON_LOCAL_OFFSET: V3 = [0, 0.62, 0];
+
+// ── Backend-driven target + beacon (one root group per target ID) ───
+// Renders a target owned by the simulation registry at its live telemetry
+// position. Each instance owns an independent THREE.Group (resolved by ID,
+// never by selection/index), so tracking or moving one target cannot affect
+// another. When selected with the translate gizmo, dragging moves THIS
+// target only: on release the world position is posted to the backend,
+// which re-anchors that target's trajectory origin. Telemetry then reflects
+// the move, the beacon follows via its mount offset, and the FSOC camera
+// reacts through detection → Kalman → PID. Satellites and cameras are never
+// touched here.
+function BackendTargetGroup({
+  targetId,
+  beaconId,
+  position,
+  accent,
+  beaconColor,
+  beaconScale,
+  targetLabelColor,
+  selected,
+  gizmoMode,
+  showLabels,
+  halo,
+  onSelect,
+  onMoveTarget,
+  onOrbitEnabled,
+}: {
+  targetId: string;
+  beaconId: string;
+  position: V3;
+  accent?: string;
+  beaconColor: string;
+  beaconScale: number;
+  targetLabelColor: string;
+  selected: boolean;
+  gizmoMode: 'translate' | 'rotate' | null;
+  showLabels: boolean;
+  halo: boolean;
+  onSelect: (id: string) => void;
+  onMoveTarget: (id: string, world: V3) => void;
+  onOrbitEnabled: (enabled: boolean) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null!);
+  const draggingRef = useRef(false);
+
+  // Telemetry drives the transform — except while the operator drags, when
+  // TransformControls owns it. useLayoutEffect avoids a flash at the origin.
+  useLayoutEffect(() => {
+    const g = groupRef.current;
+    if (!g || draggingRef.current) return;
+    g.position.set(position[0], position[1], position[2]);
+  }, [position]);
+
+  return (
+    <>
+      <group
+        ref={groupRef}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(targetId);
+        }}
+      >
+        <SatelliteMesh target accent={selected ? '#ffffff' : accent} />
+        {/* Beacon is a child of the target group at BEACON_LOCAL_OFFSET —
+            same offset used by LocalObject and VirtualFsocRig. */}
+        <group position={BEACON_LOCAL_OFFSET} onClick={(e) => { e.stopPropagation(); onSelect(beaconId); }}>
+          <Beacon color={beaconColor} scale={beaconScale} />
+          {showLabels && <ObjLabel text={`${beaconId} · BEACON`} color="#bfe6ff" offset={0.2} />}
+        </group>
+        {showLabels && (
+          <ObjLabel
+            text={`${targetId} · TARGET`}
+            offset={0.48}
+            color={targetLabelColor}
+          />
+        )}
+        {halo && selected && (
+          <mesh>
+            <sphereGeometry args={[0.85, 16, 12]} />
+            <meshBasicMaterial color="#e8b34a" transparent opacity={0.1} depthWrite={false} />
+          </mesh>
+        )}
+      </group>
+      {selected && gizmoMode === 'translate' && (
+        <TransformControls
+          object={groupRef}
+          mode="translate"
+          size={0.75}
+          onMouseDown={() => {
+            draggingRef.current = true;
+            onOrbitEnabled(false);
+          }}
+          onMouseUp={() => {
+            const g = groupRef.current;
+            if (g) {
+              onMoveTarget(targetId, [g.position.x, g.position.y, g.position.z]);
+            }
+            draggingRef.current = false;
+            onOrbitEnabled(true);
+          }}
+        />
+      )}
+    </>
+  );
+}
 
 // ── Interactive local object (visualisation-only extra) ──────────
 function LocalObject({
@@ -749,8 +862,16 @@ function LocalObject({
       >
         <SatelliteMesh target={isTarget} accent={selected ? '#ffffff' : accent} />
         {isTarget && showBeacon && (
-          <group ref={beaconRef} position={BEACON_LOCAL_OFFSET}>
+          <group
+            ref={beaconRef}
+            position={BEACON_LOCAL_OFFSET}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(def.beaconId);
+            }}
+          >
             <Beacon color="#ffd9a0" scale={0.85} />
+            {showLabels && <ObjLabel text={`${def.beaconLabel} · BEACON`} color="#bfe6ff" offset={0.2} />}
           </group>
         )}
         {selected && (
@@ -759,7 +880,7 @@ function LocalObject({
             <meshBasicMaterial color="#e8b34a" transparent opacity={0.14} depthWrite={false} />
           </mesh>
         )}
-        {showLabels && <ObjLabel text={def.label} color={isTarget ? '#f0c98a' : '#9fd8e8'} />}
+        {showLabels && <ObjLabel text={`${def.displayLabel} · ${isTarget ? 'TARGET' : 'SATELLITE'}`} color={isTarget ? '#f0c98a' : '#9fd8e8'} />}
       </group>
       {selected && gizmoMode && (
         <TransformControls
@@ -809,7 +930,7 @@ function NavRig({
   cameraMode,
   setCameraMode,
   followId,
-  positionsRef,
+  resolveWorldPos,
   fallback,
   orbitEnabled,
 }: {
@@ -817,7 +938,11 @@ function NavRig({
   cameraMode: CameraMode;
   setCameraMode: (mode: CameraMode) => void;
   followId: string | null;
-  positionsRef: React.MutableRefObject<Map<string, V3>>;
+  // Authoritative entity position lookup (telemetry-first, then client
+  // reports, then statics). positionsRef alone is insufficient: backend-
+  // driven targets/beacons never report into it, so resolving focus/follow
+  // from it would silently aim at the live tracked target instead.
+  resolveWorldPos: (id: string | null) => V3 | null;
   fallback: V3;
   orbitEnabled: boolean;
 }) {
@@ -840,6 +965,8 @@ function NavRig({
   // re-fire this effect ~30×/sec and permanently hijack the camera.
   const followIdRef = useRef(followId);
   followIdRef.current = followId;
+  const resolveRef = useRef(resolveWorldPos);
+  resolveRef.current = resolveWorldPos;
   const fallbackRef = useRef(fallback);
   fallbackRef.current = fallback;
   const cameraModeRef = useRef(cameraMode);
@@ -865,7 +992,13 @@ function NavRig({
     const fb = fallbackRef.current;
 
     if (viewReq.name === 'target') {
-      const p = (fid && positionsRef.current.get(fid)) || fb;
+      // FOCUS resolves the SELECTED entity (never the tracked one) through
+      // the authoritative resolver. Viewer camera only — FSOC pan/tilt,
+      // PID, Kalman and tracking state are untouched by this path.
+      const p = (fid && resolveRef.current(fid)) || fb;
+      console.debug('[ASTERIA FOCUS START]', {
+        entityId: fid, worldPos: p, fellBackToLive: !(fid && resolveRef.current(fid)),
+      });
       dest.set(p[0], p[1] + 0.3, p[2]);
       destCamPos = [p[0] + 1.8, p[1] + 1.2, p[2] + 2.5];
     } else if (viewReq.name === 'camera') {
@@ -895,7 +1028,7 @@ function NavRig({
   // Only active when cameraMode === 'follow'. Does NOT move camera.position.
   useFrame(() => {
     if (cameraMode !== 'follow' || !controls) return;
-    const p = (followId && positionsRef.current.get(followId)) || fallback;
+    const p = (followId && resolveWorldPos(followId)) || fallback;
     tmp.set(p[0], p[1], p[2]);
     controls.target.lerp(tmp, 0.06);
     controls.update();
@@ -958,6 +1091,7 @@ function SceneContent(props: {
   objects: SceneObjectDef[];
   selectedId: string | null;
   gizmoMode: 'translate' | 'rotate' | null;
+  onMoveTarget: (id: string, world: V3) => void;
   viewReq: ViewRequest | null;
   cameraMode: CameraMode;
   setCameraMode: (mode: CameraMode) => void;
@@ -968,6 +1102,7 @@ function SceneContent(props: {
   onMove: (id: string, base: V3) => void;
   onRotate: (id: string, rot: V3) => void;
   onOrbitEnabled: (v: boolean) => void;
+  resolveWorldPos: (id: string | null) => V3 | null;
 }) {
   const { frame, history, settings, objects, selectedId, gizmoMode } = props;
 
@@ -991,7 +1126,12 @@ function SceneContent(props: {
     props.velocitiesRef.current.set('SAT-01', [0, 0, 0]);
   }, [props.positionsRef, props.velocitiesRef]);
 
-  const liveId = frame?.target.id ?? 'BEACON-01';
+  const liveTargetId = frame?.target.entity?.id ?? frame?.target.id ?? 'TARGET-01';
+  const liveBeaconId = frame?.target.entity?.beaconId ?? frame?.target.beacon?.id ?? 'BEACON-01';
+  const activeSession = frame?.tracking_session ?? null;
+  const activeSatelliteId = activeSession?.satelliteId ?? frame?.target.entity?.hostSatelliteId ?? 'SAT-01';
+  const activeCameraId = activeSession?.cameraId ?? 'FSOC-CAM-01';
+  const activeSatellitePosition = props.positionsRef.current.get(activeSatelliteId) ?? SAT_A_POSITION;
 
   // Beacon for the live backend target is at BEACON_LOCAL_OFFSET above the target terminal.
   const liveBeaconWorldPos: V3 = [
@@ -1003,12 +1143,21 @@ function SceneContent(props: {
   // Determine which beacon the FSOC camera currently points at.
   // If a user-added target is being tracked (trackingState !== 'IDLE'),
   // use its beaconId position reported by LocalObject; otherwise use the live beacon.
+  // Exception: once the backend owns the tracked target (it appears in live
+  // telemetry), its LocalObject is dedup-filtered out of the render tree, so
+  // its useFrame stops and the reported beacon position freezes. The live
+  // backend beacon is authoritative in that case — using the stale report
+  // would aim the FOV line-of-sight at a frozen ghost position.
   const trackedLocalTarget = props.objects.find(
     (o) => o.kind === 'target' && o.trackingState !== 'IDLE',
   );
-  const activeBeaconPos: V3 =
-    (trackedLocalTarget && props.positionsRef.current.get(trackedLocalTarget.beaconId))
-    ?? liveBeaconWorldPos;
+  const trackedIsBackendOwned = trackedLocalTarget != null
+    && (frame?.targets ?? []).some((t) => (t.entity?.id ?? t.id) === trackedLocalTarget.id);
+  const localBeaconPos: V3 | undefined =
+    !trackedIsBackendOwned && trackedLocalTarget
+      ? props.positionsRef.current.get(trackedLocalTarget.beaconId)
+      : undefined;
+  const activeBeaconPos: V3 = localBeaconPos ?? liveBeaconWorldPos;
 
   return (
     <>
@@ -1030,7 +1179,7 @@ function SceneContent(props: {
       >
         <SatelliteMesh accent={selectedId === 'SAT-01' ? '#ffffff' : undefined} />
         <GimbalTerminal pan={frame?.camera.pan ?? 0} tilt={frame?.camera.tilt ?? 0} active={active} />
-        {settings.labels && <ObjLabel text="SAT-01" offset={0.66} />}
+        {settings.labels && <ObjLabel text="SAT-01 · SATELLITE" offset={0.66} />}
         {selectedId === 'SAT-01' && (
           <mesh>
             <sphereGeometry args={[0.85, 16, 12]} />
@@ -1039,48 +1188,41 @@ function SceneContent(props: {
         )}
       </group>
 
-      {/* live backend target + beacon */}
-      <group
+      {/* live backend target + beacon (primary tracking objective) */}
+      <BackendTargetGroup
+        targetId={liveTargetId}
+        beaconId={liveBeaconId}
         position={targetPosition}
-        onClick={(e) => {
-          e.stopPropagation();
-          props.onSelect(liveId);
-        }}
-      >
-        <SatelliteMesh target accent={selectedId === liveId ? '#ffffff' : undefined} />
-        {/* Beacon is a child of the target group at BEACON_LOCAL_OFFSET —
-            same offset used by LocalObject and VirtualFsocRig. */}
-        <group position={BEACON_LOCAL_OFFSET}>
-          <Beacon color={state === 'LOCKED' ? '#c4ffd9' : '#bfe0ff'} scale={1} />
-        </group>
-        {settings.labels && (
-          <ObjLabel
-            text={selectedId === liveId ? (liveId.startsWith('BEACON') ? 'TARGET-01' : liveId) : (liveId.startsWith('TARGET') ? liveId.replace('TARGET', 'BEACON') : liveId)}
-            offset={0.48}
-            color="#f0e2c4"
-          />
-        )}
-        {selectedId === liveId && (
-          <mesh>
-            <sphereGeometry args={[0.85, 16, 12]} />
-            <meshBasicMaterial color="#e8b34a" transparent opacity={0.1} depthWrite={false} />
-          </mesh>
-        )}
-      </group>
+        accent={undefined}
+        beaconColor={state === 'LOCKED' ? '#c4ffd9' : '#bfe0ff'}
+        beaconScale={1}
+        targetLabelColor="#f0e2c4"
+        selected={selectedId === liveTargetId}
+        gizmoMode={selectedId === liveTargetId ? gizmoMode : null}
+        showLabels={settings.labels}
+        halo
+        onSelect={props.onSelect}
+        onMoveTarget={props.onMoveTarget}
+        onOrbitEnabled={props.onOrbitEnabled}
+      />
 
       {/* virtual tracking camera + FOV (telemetry-driven) */}
       <VirtualFsocRig
         frame={frame}
-        liveId={liveId}
+        cameraId={activeCameraId}
+        hostPosition={activeSatellitePosition}
         targetPosition={targetPosition}
         beaconWorldPos={activeBeaconPos}
         showFov={settings.fov}
         showLabels={settings.labels}
         reportPosition={reportPosition}
+        onSelect={props.onSelect}
       />
       <TrajectoryLine history={history} visible={settings.trajectory} />
 
-      {/* secondary live targets from multi-target mode */}
+      {/* Every non-active backend target has its own state record and root
+          group. React keys are stable IDs, so tracking another target cannot
+          reuse or relabel this object's Three.js transform. */}
       {(frame?.targets ?? [])
         .filter((t) => !t.is_primary && t.position)
         .map((t) => {
@@ -1089,19 +1231,31 @@ function SceneContent(props: {
             SAT_A_POSITION[1] + t.position.y * WORLD_SCALE,
             SAT_A_POSITION[2] + t.position.z * WORLD_SCALE,
           ];
+          const targetId = t.entity?.id ?? t.id;
+          const beaconId = t.entity?.beaconId ?? t.beacon?.id ?? 'UNRESOLVED-BEACON';
           return (
-            <group key={t.id} position={p}>
-              <SatelliteMesh target accent="#e0a44a" />
-              <group position={BEACON_LOCAL_OFFSET}>
-                <Beacon color="#ffd9a0" scale={0.8} />
-              </group>
-              {settings.labels && <ObjLabel text={`${t.id} [SEC]`} color="#f0c98a" />}
-            </group>
+            <BackendTargetGroup
+              key={targetId}
+              targetId={targetId}
+              beaconId={beaconId}
+              position={p}
+              accent="#e0a44a"
+              beaconColor="#ffd9a0"
+              beaconScale={0.8}
+              targetLabelColor="#f0c98a"
+              selected={selectedId === targetId}
+              gizmoMode={selectedId === targetId ? gizmoMode : null}
+              showLabels={settings.labels}
+              halo={false}
+              onSelect={props.onSelect}
+              onMoveTarget={props.onMoveTarget}
+              onOrbitEnabled={props.onOrbitEnabled}
+            />
           );
         })}
 
       {/* user-added visualisation objects */}
-      {objects.map((def) => (
+      {objects.filter((def) => def.kind !== 'target' || !(frame?.targets ?? []).some((target) => (target.entity?.id ?? target.id) === def.id)).map((def) => (
         <LocalObject
           key={def.id}
           def={def}
@@ -1123,7 +1277,7 @@ function SceneContent(props: {
         cameraMode={props.cameraMode}
         setCameraMode={props.setCameraMode}
         followId={props.selectedId}
-        positionsRef={props.positionsRef}
+        resolveWorldPos={props.resolveWorldPos}
         fallback={targetPosition}
         orbitEnabled={props.orbitEnabled}
       />
@@ -1199,6 +1353,7 @@ export default function Scene3D({ frame, history }: Props) {
   }, []);
   const [settings, setSettings] = useState<SceneSettings>({ brightness: 1, stars: true, fov: true, trajectory: true, labels: true });
   const [objects, setObjects] = useState<SceneObjectDef[]>([]);
+  const [entityGraph, setEntityGraph] = useState<SimulationEntity[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [gizmoMode, setGizmoMode] = useState<'translate' | 'rotate' | null>('translate');
   const [viewReq, setViewReq] = useState<ViewRequest | null>(null);
@@ -1214,9 +1369,90 @@ export default function Scene3D({ frame, history }: Props) {
   const positionsRef = useRef<Map<string, V3>>(new Map());
   const velocitiesRef = useRef<Map<string, V3>>(new Map());
 
-  const liveId = frame?.target.id ?? 'BEACON-01';
-  const liveTargetLabel = liveId.startsWith('BEACON') ? liveId.replace('BEACON', 'TARGET') : liveId;
-  const liveBeaconLabel = liveId.startsWith('TARGET') ? liveId.replace('TARGET', 'BEACON') : liveId;
+  // END DEMO is distinct from STOP TRACKING: discard only client-side
+  // runtime scene objects when the backend broadcasts its clean scenario.
+  useEffect(() => {
+    if (!frame?.scenario_reset) return;
+    setObjects([]);
+    setSelectedId(null);
+    setGizmoMode(null);
+    setEntityGraph([]);
+    positionsRef.current.clear();
+    velocitiesRef.current.clear();
+    localTargetCounter = 1;
+    localSatCounter = 1;
+    void refreshEntityGraph();
+  }, [frame?.scenario_reset]);
+
+  // The backend registry is the authoritative identity/relationship graph.
+  // The local scene only owns display transforms and operator-only labels.
+  const refreshEntityGraph = async () => {
+    try {
+      const registry = await fsocApi.getEntityRegistry();
+      const ids = registry.entities.map((entity) => entity.id);
+      if (new Set(ids).size !== ids.length) {
+        console.error('[ASTERIA STATE ERROR] duplicate entity ID returned by simulation registry');
+        return;
+      }
+      setEntityGraph(registry.entities);
+    } catch (error) {
+      console.warn('Unable to refresh ASTERIA entity registry', error);
+    }
+  };
+
+  useEffect(() => {
+    void refreshEntityGraph();
+  }, []);
+
+  // IDs are semantic, never inferred from a display name. A target and its
+  // mounted beacon are separate selectable entities even when users rename them.
+  const liveTargetId = frame?.target.entity?.id ?? frame?.target.id ?? 'TARGET-01';
+  const liveBeaconId = frame?.target.entity?.beaconId ?? frame?.target.beacon?.id ?? 'BEACON-01';
+  const activeSession = frame?.tracking_session ?? null;
+  const activeSatelliteId = activeSession?.satelliteId ?? frame?.target.entity?.hostSatelliteId ?? 'SAT-01';
+  const activeCameraId = activeSession?.cameraId ?? 'FSOC-CAM-01';
+  const liveTargetLabel = liveTargetId;
+  const liveBeaconLabel = liveBeaconId;
+
+  // Authoritative world-position lookup for ANY entity id (targets and
+  // beacons, backend-driven or local). Telemetry wins for ids the backend
+  // owns — client reports for those go stale once their LocalObject is
+  // dedup-filtered out of the tree. Falls back to client reports (local
+  // objects, SAT-01, camera aperture) and finally statics. Used by FOCUS,
+  // FOLLOW and the inspector so they never silently aim at the live
+  // tracked target when another entity is selected.
+  const simToWorld = (x: number, y: number, z: number): V3 => ([
+    SAT_A_POSITION[0] + x * WORLD_SCALE,
+    SAT_A_POSITION[1] + y * WORLD_SCALE,
+    SAT_A_POSITION[2] + z * WORLD_SCALE,
+  ]);
+  const resolveEntityWorldPos = (id: string | null): V3 | null => {
+    if (!id) return null;
+    const liveTargets = frame?.targets ?? [];
+    for (const t of liveTargets) {
+      const tid = t.entity?.id ?? t.id;
+      if (tid === id && t.position) {
+        return simToWorld(t.position.x, t.position.y, t.position.z);
+      }
+      const bid = t.entity?.beaconId ?? t.beacon?.id;
+      if (bid && bid === id && t.position) {
+        const w = simToWorld(t.position.x, t.position.y, t.position.z);
+        return [w[0] + BEACON_LOCAL_OFFSET[0], w[1] + BEACON_LOCAL_OFFSET[1], w[2] + BEACON_LOCAL_OFFSET[2]];
+      }
+    }
+    const reported = positionsRef.current.get(id);
+    if (reported) return reported;
+    if (id === 'SAT-01') return SAT_A_POSITION;
+    return null;
+  };
+
+  const handleSelect = (id: string | null) => {
+    console.debug('[ASTERIA SELECTION]', {
+      selectedEntityId: id,
+      activeTrackingTargetId: activeSession?.targetId ?? liveTargetId,
+    });
+    setSelectedId(id);
+  };
 
   const setS = (k: keyof SceneSettings, v: number | boolean) => setSettings((p) => ({ ...p, [k]: v }));
   const requestView = (name: ViewRequest['name']) => {
@@ -1257,12 +1493,15 @@ export default function Scene3D({ frame, history }: Props) {
       const baseY = SAT_A_POSITION[1] + simY * WORLD_SCALE;
       const baseZ = SAT_A_POSITION[2] + simZ * WORLD_SCALE;
       const def: SceneObjectDef = {
-        id: `XTGT-${n}`,
+        id: `TARGET-${n}`,
         kind: 'target',
+        type: 'target',
         label: `TARGET-${n}`,
         displayLabel: `TARGET-${n}`,
-        hostId: `SAT-${n}`,
+        hostId: 'SAT-01',
         beaconId: `BEACON-${n}`,
+        beaconLabel: `BEACON-${n}`,
+        cameraId: 'FSOC-CAM-01',
         trackingState: 'IDLE',
         base: [baseX, baseY, baseZ] as V3,
         rotation: [0, 0, 0],
@@ -1281,9 +1520,12 @@ export default function Scene3D({ frame, history }: Props) {
           y: simY,
           z: simZ,
           trajectory: 'sinusoidal',
+          satellite_id: def.hostId,
+          camera_id: def.cameraId,
           beacon_size_px: 10.0,
           beacon_shape: 'square',
         });
+        await refreshEntityGraph();
       } catch (e) {
         console.error('Failed to register target with backend', e);
       }
@@ -1296,12 +1538,15 @@ export default function Scene3D({ frame, history }: Props) {
       const n = String(localSatCounter).padStart(2, '0');
       const cameraId = `FSOC-CAM-${n}`;
       const def: SceneObjectDef = {
-        id: `XSAT-${n}`,
+        id: `SAT-${n}`,
         kind: 'satellite',
+        type: 'satellite',
         label: `SAT-${n}`,
         displayLabel: `SAT-${n}`,
         hostId: `SAT-${n}`,
         beaconId: cameraId,
+        beaconLabel: cameraId,
+        cameraId,
         trackingState: 'IDLE',
         base: [0.6 + objects.length * 0.7, 0.5 + (objects.length % 2) * 0.5, 1.2 - objects.length * 0.4],
         rotation: [0, 0, 0],
@@ -1316,6 +1561,7 @@ export default function Scene3D({ frame, history }: Props) {
       // Register with backend
       try {
         await fsocApi.registerSatellite(def.displayLabel, cameraId);
+        await refreshEntityGraph();
       } catch (e) {
         console.error('Failed to register satellite with backend', e);
       }
@@ -1330,17 +1576,103 @@ export default function Scene3D({ frame, history }: Props) {
     setObjects((p) => p.map((o) => (o.id === id ? { ...o, ...patch } : o)));
 
   const deleteSelected = () => {
-    if (!selectedId || selectedId === 'SAT-01' || selectedId === liveId || selectedId === liveTargetLabel) return;
-    setObjects((p) => p.filter((o) => o.id !== selectedId));
+    if (!selectedId || selectedId === 'SAT-01' || selectedId === 'FSOC-CAM-01' || selectedId === liveTargetId || selectedId === liveBeaconId) return;
+    const owner = objects.find((o) => o.id === selectedId || o.beaconId === selectedId);
+    if (!owner) return;
+    setObjects((p) => p.filter((o) => o.id !== owner.id));
     positionsRef.current.delete(selectedId);
     velocitiesRef.current.delete(selectedId);
     setSelectedId(null);
   };
 
   const selectedLocal = objects.find((o) => o.id === selectedId) ?? null;
-  const isLiveBeacon = selectedId === liveId || selectedId === liveTargetLabel || selectedId === liveBeaconLabel;
-  const isLiveSat = selectedId === 'SAT-01';
-  const isLiveSelection = isLiveBeacon || isLiveSat;
+  const selectedLocalBeaconOwner = objects.find((o) => o.beaconId === selectedId) ?? null;
+  const selectedGraphEntity = entityGraph.find((entity) => entity.id === selectedId) ?? null;
+  // Entity type comes from the backend graph, never from display text or ID format.
+  const isLiveTarget = selectedId === liveTargetId && (selectedGraphEntity?.type ?? 'target') === 'target';
+  const isLiveBeacon = selectedId === liveBeaconId && (selectedGraphEntity?.type ?? 'beacon') === 'beacon';
+  const isLiveSat = selectedId === activeSatelliteId && (selectedGraphEntity?.type ?? 'satellite') === 'satellite';
+  const isLiveCamera = selectedId === activeCameraId && (selectedGraphEntity?.type ?? 'fsoc_camera') === 'fsoc_camera';
+  const isLiveSelection = isLiveTarget || isLiveBeacon || isLiveSat || isLiveCamera;
+
+  // Resolve the selection to a backend-owned target (directly, or via its
+  // beacon's parent link). ID-based, never positional: moving one target
+  // must never resolve to another. Drives the inspector, MOVE gizmo and
+  // TRACK button for selections the backend owns.
+  const inspectedBackendEntry = (() => {
+    if (!selectedId) return null;
+    for (const t of frame?.targets ?? []) {
+      const tid = t.entity?.id ?? t.id;
+      const bid = t.entity?.beaconId ?? t.beacon?.id ?? null;
+      const host = t.entity?.hostSatelliteId ?? null;
+      const pos = t.position ?? null;
+      const vel = (t as { velocity?: { x: number; y: number; z: number } }).velocity ?? null;
+      if (tid === selectedId) {
+        return { targetId: tid, beaconId: bid ?? tid, hostId: host, pos, vel, isBeacon: false };
+      }
+      if (bid && bid === selectedId) {
+        return { targetId: tid, beaconId: bid, hostId: host, pos, vel, isBeacon: true };
+      }
+    }
+    return null;
+  })();
+  const selectedBackendTargetId = inspectedBackendEntry?.targetId ?? null;
+  const inspectedBeaconId =
+    isLiveTarget ? liveBeaconLabel
+    : selectedLocal?.kind === 'target' ? selectedLocal.beaconLabel
+    : inspectedBackendEntry && !inspectedBackendEntry.isBeacon ? inspectedBackendEntry.beaconId
+    : inspectedBackendEntry?.isBeacon ? inspectedBackendEntry.beaconId
+    : null;
+
+  // Operator manual move of ONE backend-owned target (translate gizmo on its
+  // BackendTargetGroup). World → sim metres, then POST; the backend
+  // re-anchors only that target's trajectory origin. Beacon follows via its
+  // mount offset; satellites, cameras and tracking state are untouched.
+  const moveBackendTarget = (id: string, world: V3) => {
+    const simPos = {
+      x: (world[0] - SAT_A_POSITION[0]) / WORLD_SCALE,
+      y: (world[1] - SAT_A_POSITION[1]) / WORLD_SCALE,
+      z: (world[2] - SAT_A_POSITION[2]) / WORLD_SCALE,
+    };
+    console.debug('[ASTERIA TARGET MOVE]', {
+      targetId: id,
+      simPos,
+      trackingTargetId: activeSession?.targetId ?? liveTargetId,
+      trackingState: frame?.target_state ?? null,
+    });
+    void fsocApi.moveTarget(id, simPos).catch((e) => {
+      console.error('Failed to move target', e);
+    });
+  };
+
+  // Track a backend-owned target by ID. The backend resolves the stored
+  // target → beacon → satellite → camera relationship and opens a tracking
+  // session; no position payload is needed (and ignored) for registered ids.
+  // Selection state is deliberately untouched — tracking and selection are
+  // independent concepts.
+  const trackBackendTarget = async (tid: string) => {
+    setSwitching(true);
+    try {
+      const entry = (frame?.targets ?? []).find((t) => (t.entity?.id ?? t.id) === tid);
+      console.debug('[ASTERIA TRACKING START]', {
+        targetId: tid,
+        beaconId: entry?.entity?.beaconId ?? entry?.beacon?.id ?? null,
+        satelliteId: entry?.entity?.hostSatelliteId ?? null,
+      });
+      await fsocApi.switchTarget({ target_id: tid });
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.kind === 'target'
+            ? { ...o, trackingState: o.id === tid ? 'TRACKING' : 'IDLE' }
+            : o,
+        ),
+      );
+    } catch (e) {
+      console.error('Failed to track target', e);
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   // Operator target shift → POST to backend (debounced). This moves the TRUE
   // beacon world position, so the 2D feed, detection, PID and FOV all follow.
@@ -1370,6 +1702,9 @@ export default function Scene3D({ frame, history }: Props) {
   const pan = frame?.camera.pan ?? 0;
   const tilt = frame?.camera.tilt ?? 0;
   const tstate = frame?.target_state ?? 'READY';
+  const trackingOwnsCamera = ['ACQUIRING', 'TRACKING', 'LOCKED', 'REACQUIRING', 'SEARCHING'].includes(tstate);
+  const fallbackEntityIds = ['SAT-01', 'FSOC-CAM-01', liveTargetId, liveBeaconId, ...objects.flatMap((o) => o.kind === 'target' ? [o.id, o.beaconId] : [o.id, o.cameraId])];
+  const entityListIds = Array.from(new Set(entityGraph.length ? entityGraph.map((entity) => entity.id) : fallbackEntityIds));
 
   return (
     <div
@@ -1407,13 +1742,15 @@ export default function Scene3D({ frame, history }: Props) {
           objects={objects}
           selectedId={selectedId}
           gizmoMode={gizmoMode}
+          onMoveTarget={moveBackendTarget}
+          resolveWorldPos={resolveEntityWorldPos}
           viewReq={viewReq}
           cameraMode={cameraMode}
           setCameraMode={setCameraMode}
           orbitEnabled={orbitEnabled}
           positionsRef={positionsRef}
           velocitiesRef={velocitiesRef}
-          onSelect={setSelectedId}
+          onSelect={handleSelect}
           onMove={(id, base) => updateObject(id, { base })}
           onRotate={(id, rot) => updateObject(id, { rotation: rot })}
           onOrbitEnabled={setOrbitEnabled}
@@ -1508,15 +1845,16 @@ export default function Scene3D({ frame, history }: Props) {
             </button>
           </div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {['SAT-01', liveId, ...objects.map((o) => o.id)].map((id) => {
+            {entityListIds.map((id) => {
               const obj = objects.find((o) => o.id === id);
-              const isSelected = selectedId === id || (id === liveId && isLiveBeacon);
-              const label = id === 'SAT-01' ? 'SAT-01' : id === liveId ? liveTargetLabel : (obj?.displayLabel || id);
+              const beaconOwner = objects.find((o) => o.beaconId === id);
+              const isSelected = selectedId === id;
+              const label = id === 'SAT-01' || id === 'FSOC-CAM-01' ? id : id === liveTargetId ? liveTargetLabel : id === liveBeaconId ? liveBeaconLabel : (beaconOwner?.beaconLabel || obj?.displayLabel || id);
               return (
                 <button
                   key={id}
                   style={{ ...chipBtn, pointerEvents: 'auto', ...(isSelected ? chipOn : {}) }}
-                  onClick={() => setSelectedId(id)}
+                  onClick={() => handleSelect(id)}
                 >
                   {label}
                 </button>
@@ -1525,13 +1863,14 @@ export default function Scene3D({ frame, history }: Props) {
           </div>
         </div>
 
-        {/* right: selected-object structured inspector */}
-        {(selectedLocal || isLiveSelection) && (
+        {/* right: selected-object structured inspector (selection-driven;
+            never replaced by the active tracking target) */}
+        {(selectedLocal || selectedLocalBeaconOwner || isLiveSelection || selectedBackendTargetId) && (
           <div style={{ ...panel, position: 'absolute', right: 8, top: 96, width: 220, padding: 10, pointerEvents: 'auto', maxHeight: 'calc(100% - 150px)', overflowY: 'auto' }}>
             {/* Header: Name + Tracking State Dot */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
               <div style={{ color: '#f0b35a', fontWeight: 600, fontSize: 13 }}>
-                {isLiveBeacon ? liveTargetLabel : isLiveSat ? 'SAT-01' : (selectedLocal?.displayLabel || selectedId)}
+                {isLiveTarget ? liveTargetLabel : isLiveBeacon ? liveBeaconLabel : isLiveCamera ? 'FSOC-CAM-01' : isLiveSat ? 'SAT-01' : (selectedLocalBeaconOwner?.beaconLabel || selectedLocal?.displayLabel || selectedId)}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
                 <span
@@ -1540,7 +1879,7 @@ export default function Scene3D({ frame, history }: Props) {
                     width: 7,
                     height: 7,
                     borderRadius: '50%',
-                    backgroundColor: isLiveBeacon
+                    backgroundColor: (isLiveTarget || isLiveBeacon)
                       ? (tstate === 'LOCKED' ? '#8fe0b4' : tstate === 'TRACKING' ? '#ffd9a0' : tstate === 'LOST' ? '#e08a7a' : '#9fd8e8')
                       : isLiveSat
                         ? '#7fc4d4'
@@ -1548,21 +1887,45 @@ export default function Scene3D({ frame, history }: Props) {
                   }}
                 />
                 <span style={{ color: '#8fa9a1', textTransform: 'uppercase' }}>
-                  {isLiveBeacon ? tstate : isLiveSat ? 'ONLINE' : (selectedLocal?.trackingState ?? 'IDLE')}
+                  {isLiveTarget || isLiveBeacon ? tstate : isLiveCamera ? 'FSOC CAMERA' : isLiveSat ? 'ONLINE' : (selectedLocal?.trackingState ?? 'IDLE')}
                 </span>
               </div>
             </div>
 
             {/* Entity Hierarchy Section */}
             <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
-              <PropRow label="HOST" value={isLiveBeacon ? 'SAT-02' : isLiveSat ? 'LOCAL TERMINAL' : (selectedLocal?.hostId ?? 'SAT-02')} />
-              <PropRow label="BEACON" value={isLiveBeacon ? liveBeaconLabel : isLiveSat ? 'FSOC-CAM-01' : (selectedLocal?.beaconId ?? 'BEACON-02')} />
+              <PropRow label="TYPE" value={isLiveTarget ? 'TARGET' : isLiveBeacon || selectedLocalBeaconOwner || inspectedBackendEntry?.isBeacon ? 'BEACON' : isLiveCamera ? 'FSOC CAMERA' : isLiveSat ? 'SATELLITE' : (selectedLocal?.kind ?? 'TARGET').toUpperCase()} />
+              <PropRow label={isLiveBeacon || selectedLocalBeaconOwner || inspectedBackendEntry?.isBeacon ? 'PARENT TARGET' : 'HOST'} value={isLiveBeacon ? liveTargetLabel : selectedLocalBeaconOwner?.displayLabel ?? (isLiveTarget ? 'SAT-01 / FSOC-CAM-01' : isLiveCamera ? 'SAT-01' : isLiveSat ? 'FSOC-CAM-01' : (inspectedBackendEntry && !inspectedBackendEntry.isBeacon ? (inspectedBackendEntry.hostId ?? selectedGraphEntity?.hostSatelliteId ?? 'SAT-01') : inspectedBackendEntry?.isBeacon ? inspectedBackendEntry.targetId : (selectedLocal?.hostId ?? selectedGraphEntity?.hostSatelliteId ?? 'SAT-01')))} />
+              {(isLiveTarget || selectedLocal?.kind === 'target' || (inspectedBackendEntry && !inspectedBackendEntry.isBeacon)) && inspectedBeaconId && (
+                <PropRow label="BEACON" value={inspectedBeaconId} />
+              )}
+              {selectedLocal && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: 9 }}>
+                  <span style={{ color: '#8d9195' }}>NAME</span>
+                  <input
+                    value={selectedLocal.displayLabel}
+                    onChange={(e) => updateObject(selectedLocal.id, { displayLabel: e.target.value || selectedLocal.label })}
+                    style={{ minWidth: 0, flex: 1, background: '#101a22', color: '#dfe6e2', border: '1px solid #38515d', fontFamily: 'monospace', fontSize: 9 }}
+                  />
+                </label>
+              )}
+              {selectedLocalBeaconOwner && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: 9 }}>
+                  <span style={{ color: '#8d9195' }}>NAME</span>
+                  <input
+                    value={selectedLocalBeaconOwner.beaconLabel}
+                    onChange={(e) => updateObject(selectedLocalBeaconOwner.id, { beaconLabel: e.target.value || selectedLocalBeaconOwner.beaconId })}
+                    style={{ minWidth: 0, flex: 1, background: '#101a22', color: '#dfe6e2', border: '1px solid #38515d', fontFamily: 'monospace', fontSize: 9 }}
+                  />
+                </label>
+              )}
             </div>
 
-            {/* Position & Velocity */}
+            {/* Position & Velocity (selection-driven; backend-owned selections
+                read live telemetry so they never show stale zeros) */}
             <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
               <div style={{ color: '#8d9195', fontSize: 10, marginBottom: 2 }}>POSITION (WORLD)</div>
-              {isLiveBeacon ? (
+              {isLiveTarget || isLiveBeacon ? (
                 <>
                   <PropRow label="X" value={`${(frame?.target.position.x ?? 0).toFixed(2)} m`} />
                   <PropRow label="Y" value={`${(frame?.target.position.y ?? 0).toFixed(2)} m`} />
@@ -1574,6 +1937,12 @@ export default function Scene3D({ frame, history }: Props) {
                   <PropRow label="Y" value={`${SAT_A_POSITION[1].toFixed(2)} m`} />
                   <PropRow label="Z" value={`${SAT_A_POSITION[2].toFixed(2)} m`} />
                 </>
+              ) : inspectedBackendEntry?.pos ? (
+                <>
+                  <PropRow label="X" value={`${inspectedBackendEntry.pos.x.toFixed(2)} m`} />
+                  <PropRow label="Y" value={`${inspectedBackendEntry.pos.y.toFixed(2)} m`} />
+                  <PropRow label="Z" value={`${inspectedBackendEntry.pos.z.toFixed(2)} m`} />
+                </>
               ) : (
                 <>
                   <PropRow label="X" value={`${shownPos ? ((shownPos[0] - SAT_A_POSITION[0]) / WORLD_SCALE).toFixed(2) : '0.00'} m`} />
@@ -1583,7 +1952,7 @@ export default function Scene3D({ frame, history }: Props) {
               )}
 
               <div style={{ color: '#8d9195', fontSize: 10, marginTop: 4, marginBottom: 2 }}>VELOCITY</div>
-              {isLiveBeacon ? (
+              {isLiveTarget || isLiveBeacon ? (
                 <>
                   <PropRow label="X" value={`${(frame?.target.velocity.x ?? 0).toFixed(2)} m/s`} />
                   <PropRow label="Y" value={`${(frame?.target.velocity.y ?? 0).toFixed(2)} m/s`} />
@@ -1591,6 +1960,12 @@ export default function Scene3D({ frame, history }: Props) {
                 </>
               ) : isLiveSat ? (
                 <PropRow label="STATIC" value="0.00 m/s" />
+              ) : inspectedBackendEntry?.vel ? (
+                <>
+                  <PropRow label="X" value={`${inspectedBackendEntry.vel.x.toFixed(2)} m/s`} />
+                  <PropRow label="Y" value={`${inspectedBackendEntry.vel.y.toFixed(2)} m/s`} />
+                  <PropRow label="Z" value={`${inspectedBackendEntry.vel.z.toFixed(2)} m/s`} />
+                </>
               ) : (
                 <>
                   <PropRow label="X" value={`${liveVel ? (liveVel[0] / WORLD_SCALE * 0.05).toFixed(2) : '0.00'} m/s`} />
@@ -1625,24 +2000,65 @@ export default function Scene3D({ frame, history }: Props) {
               </div>
             )}
 
-            {isLiveBeacon && (
+            {isLiveTarget && (
               <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
                 <PropRow label="MOTION" value={((backendTraj as string) || 'LIVE TRAJECTORY').toUpperCase()} />
                 <PropRow label="TRACKING" value={tstate} />
               </div>
             )}
 
-            {isLiveSat && (
+            {(isLiveSat || isLiveCamera) && (
               <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
                 <PropRow label="PAN" value={`${pan.toFixed(2)}°`} />
                 <PropRow label="TILT" value={`${tilt.toFixed(2)}°`} />
                 <PropRow label="FOV" value={frame ? `${frame.camera.fov_h}°×${frame.camera.fov_v}°` : '4°×3°'} />
+                {isLiveCamera && (
+                  <div style={{ marginTop: 6, opacity: trackingOwnsCamera ? 0.5 : 1 }}>
+                    <div style={{ color: trackingOwnsCamera ? '#d9b06a' : '#8d9195', fontSize: 9, marginBottom: 3 }}>
+                      {trackingOwnsCamera ? 'PID OWNS PAN / TILT' : 'MANUAL PAN / TILT'}
+                    </div>
+                    {(['PAN', 'TILT'] as const).map((axis) => (
+                      <label key={axis} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 9 }}>
+                        <span style={{ width: 25, color: '#8d9195' }}>{axis}</span>
+                        <input
+                          type="range"
+                          min={-45}
+                          max={45}
+                          step={0.1}
+                          value={axis === 'PAN' ? pan : tilt}
+                          disabled={trackingOwnsCamera}
+                          onChange={(e) => fsocApi.updateCamera(axis === 'PAN' ? Number(e.target.value) : pan, axis === 'TILT' ? Number(e.target.value) : tilt).catch(console.error)}
+                          style={{ flex: 1 }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {/* Action Buttons: TRACK TARGET & FOCUS TARGET */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
-              {selectedLocal && selectedLocal.kind === 'target' && (
+              {selectedBackendTargetId && !inspectedBackendEntry?.isBeacon && (
+                <button
+                  style={{
+                    ...chipBtn,
+                    pointerEvents: 'auto',
+                    backgroundColor: '#1b382d',
+                    borderColor: '#4eb483',
+                    color: '#8fe0b4',
+                    fontWeight: 600,
+                    textAlign: 'center',
+                    padding: '6px 8px',
+                  }}
+                  disabled={switching}
+                  onClick={() => void trackBackendTarget(selectedBackendTargetId)}
+                  title={`Track ${selectedBackendTargetId} (resolves beacon → satellite → camera)`}
+                >
+                  {switching ? 'SWITCHING…' : '🎯 TRACK TARGET'}
+                </button>
+              )}
+              {selectedLocal && selectedLocal.kind === 'target' && !selectedBackendTargetId && (
                 <button
                   style={{
                     ...chipBtn,
@@ -1688,12 +2104,21 @@ export default function Scene3D({ frame, history }: Props) {
                       };
                       const trajectory = trajMap[selectedLocal.motion] ?? 'static';
 
+                      console.debug('[ASTERIA TRACKING START]', {
+                        targetId: selectedLocal.id,
+                        beaconId: selectedLocal.beaconId,
+                        satelliteId: selectedLocal.hostId,
+                        cameraId: selectedLocal.cameraId,
+                      });
                       await fsocApi.switchTarget({
-                        target_id: selectedLocal.displayLabel,
+                        // Track by immutable entity ID; displayLabel may be renamed by the operator.
+                        target_id: selectedLocal.id,
                         position: { x: simX, y: simY, z: simZ },
                         velocity: { x: simVx, y: simVy, z: 0 },
                         trajectory,
                         beacon_offset: { x: 0, y: 0, z: 0 },
+                        satellite_id: selectedLocal.hostId,
+                        camera_id: selectedLocal.cameraId,
                       });
                       setObjects((prev) =>
                         prev.map((o) =>
@@ -1711,7 +2136,7 @@ export default function Scene3D({ frame, history }: Props) {
                 </button>
               )}
 
-              {isLiveBeacon && (
+              {isLiveTarget && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   {/* REACQUIRE — works from any state including TARGET LOST */}
                   <button
@@ -1746,6 +2171,32 @@ export default function Scene3D({ frame, history }: Props) {
                   >
                     ■ STOP TRACKING
                   </button>
+                  <button
+                    style={{
+                      ...chipBtn,
+                      pointerEvents: 'auto',
+                      backgroundColor: '#25180f',
+                      borderColor: '#9b6b36',
+                      color: '#e8c08b',
+                      fontSize: 10,
+                      textAlign: 'center',
+                      padding: '5px 8px',
+                    }}
+                    onClick={async () => {
+                      try {
+                        await fsocApi.endDemo();
+                        setObjects([]);
+                        setSelectedId(null);
+                        localTargetCounter = 1;
+                        localSatCounter = 1;
+                      } catch (error) {
+                        console.error('Failed to end demo', error);
+                      }
+                    }}
+                    title="End the demo and clear runtime-created entities"
+                  >
+                    ◼ END DEMO
+                  </button>
                   {/* RESET TRACKING */}
                   <button
                     style={{
@@ -1775,18 +2226,18 @@ export default function Scene3D({ frame, history }: Props) {
                   padding: '5px 8px',
                 }}
                 onClick={() => {
-                  if (isLiveSat) {
+                  if (isLiveSat || isLiveCamera) {
                     requestView('camera');
                   } else {
                     requestView('target');
                   }
                 }}
               >
-                🔍 {isLiveSat ? 'FOCUS TERMINAL' : 'FOCUS TARGET'}
+                🔍 {isLiveSat || isLiveCamera ? 'FOCUS TERMINAL' : 'FOCUS TARGET'}
               </button>
 
               {/* Collapsible fine-tuning: 3D shift for live beacon, gizmo for local */}
-              {isLiveBeacon && (
+              {isLiveTarget && (
                 <div style={{ marginTop: 4 }}>
                   <button
                     style={{ ...chipBtn, width: '100%', fontSize: 9, padding: '2px 4px', color: '#8d9195' }}
@@ -1822,7 +2273,18 @@ export default function Scene3D({ frame, history }: Props) {
                 </div>
               )}
 
-              {selectedLocal && (
+              {selectedBackendTargetId && (
+                <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
+                  <button
+                    style={{ ...chipBtn, flex: 1, padding: '3px 2px', fontSize: 9, pointerEvents: 'auto', ...(gizmoMode === 'translate' ? chipOn : {}) }}
+                    onClick={() => setGizmoMode((m) => (m === 'translate' ? null : 'translate'))}
+                    title={`Move ${selectedBackendTargetId} (simulation position)`}
+                  >
+                    ✥ MOVE
+                  </button>
+                </div>
+              )}
+              {selectedLocal && !selectedBackendTargetId && (
                 <div style={{ display: 'flex', gap: 3, marginTop: 4 }}>
                   <button
                     style={{ ...chipBtn, flex: 1, padding: '3px 2px', fontSize: 9, pointerEvents: 'auto', ...(gizmoMode === 'translate' ? chipOn : {}) }}

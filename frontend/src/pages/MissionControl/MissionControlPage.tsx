@@ -232,6 +232,9 @@ export function MissionControlPage() {
               <button className="mc-btn-ctrl mc-btn-stop" onClick={() => sim.stop()}>
                 ■ STOP
               </button>
+              <button className="mc-btn-ctrl mc-btn-stop" onClick={() => sim.endDemo()} title="End demo and clear runtime-created entities">
+                ◼ END DEMO
+              </button>
               <button className="mc-btn-ctrl mc-btn-track" onClick={() => nav('/tracking')}>
                 TRACKING →
               </button>

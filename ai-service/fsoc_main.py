@@ -124,11 +124,18 @@ class SwitchTargetRequest(BaseModel):
     velocity: Optional[dict] = None
     trajectory: str = "static"
     beacon_offset: Optional[dict] = None
+    satellite_id: Optional[str] = None
+    camera_id: Optional[str] = None
 
 
 class RegisterTargetRequest(BaseModel):
     target_id: str
     config: Optional[dict] = None
+
+
+class MoveTargetRequest(BaseModel):
+    target_id: str
+    position: Optional[dict] = None
 
 
 class RegisterCameraRequest(BaseModel):
@@ -171,6 +178,13 @@ async def pause_simulation():
 @app.post('/api/simulation/reset')
 async def reset_simulation():
     await engine.reset()
+    return {'success': True, 'status': engine.status}
+
+
+@app.post('/api/simulation/end_demo')
+async def end_demo():
+    """Discard the runtime scenario while retaining only default entities."""
+    await engine.end_demo()
     return {'success': True, 'status': engine.status}
 
 
@@ -236,6 +250,8 @@ def switch_target(req: SwitchTargetRequest):
         velocity=req.velocity,
         trajectory=req.trajectory,
         beacon_offset=req.beacon_offset,
+        satellite_id=req.satellite_id,
+        camera_id=req.camera_id,
     )
     return {'success': True, 'target_id': req.target_id}
 
@@ -245,6 +261,20 @@ def reacquire():
     """Force a fresh acquisition attempt for the current target from any state."""
     engine.reacquire()
     return {'success': True, 'target_id': engine._target.config.id, 'status': engine.status}
+
+
+@app.post('/api/simulation/move_target')
+def move_target(req: MoveTargetRequest):
+    """Manually relocate one registered target (operator gizmo/panel move).
+
+    Only that target's trajectory anchor changes; satellites, cameras and
+    tracking state are untouched. The beacon follows via beacon_offset and
+    the FSOC camera reacts through detection → Kalman → PID.
+    """
+    result = engine.move_target(req.target_id, req.position)
+    if not result.get('success'):
+        raise HTTPException(404, result.get('error', 'Unknown target'))
+    return result
 
 
 @app.post('/api/simulation/register_target')

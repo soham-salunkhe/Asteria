@@ -79,7 +79,7 @@ DEFAULT_KALMAN = KalmanConfig(process_noise_q=2.0,
                                initial_covariance=500.0)
 
 DEFAULT_TARGET = TargetConfig(
-    id='BEACON-01',
+    id='TARGET-01',
     initial_position=Vec3(-8.0, 2.0, 350.0),
     velocity=Vec3(6.0, 0.3, 0.0),
     trajectory='linear',
@@ -166,10 +166,12 @@ class SimulationEngine:
         self._targets: dict[str, Target] = {}  # target_id -> Target
         self._cameras: dict[str, Camera] = {}  # camera_id -> Camera
         self._satellites: dict[str, dict] = {}  # satellite_id -> {camera_id, ...}
+        self._target_links: dict[str, dict] = {}  # target_id -> {satellite_id, camera_id, beacon_id}
+        self._tracking_session_id = 0
+        self._active_tracking_session: Optional[dict] = None
         
         # Register default entities
-        self._targets[DEFAULT_TARGET.id] = self._target
-        self._cameras['FSOC-CAM-01'] = self._camera
+        self._install_default_entity_graph()
 
         # State
         self._target_state = 'READY'
@@ -206,11 +208,15 @@ class SimulationEngine:
         """Register a new target with the backend engine.
         Returns the target configuration including beacon association.
         """
-        if target_id in self._targets:
-            return {'success': False, 'error': f'Target {target_id} already exists'}
+        tc = config or {}
+        beacon_id = tc.get('beacon_id', f'BEACON-{target_id.split("-")[-1]}')
+        entity_ids = self._entity_ids()
+        if target_id in entity_ids:
+            return {'success': False, 'error': f'Entity {target_id} already exists'}
+        if beacon_id in entity_ids:
+            return {'success': False, 'error': f'Entity {beacon_id} already exists'}
         
         # Create target with provided or default config
-        tc = config or {}
         bo = tc.get('beacon_offset', {'x': 0, 'y': 0, 'z': 0})
         if tc.get('random_init'):
             from simulation.target import random_initial_position
@@ -237,18 +243,26 @@ class SimulationEngine:
         ))
         
         self._targets[target_id] = target
+        suffix = target_id.split('-')[-1]
+        camera_id = tc.get('camera_id', 'FSOC-CAM-01')
+        satellite_id = tc.get('satellite_id', 'SAT-01')
+        self._target_links[target_id] = {
+            'satellite_id': satellite_id,
+            'camera_id': camera_id,
+            'beacon_id': beacon_id,
+        }
         self._emit_event('info', f'TARGET CREATED — {target_id}')
         
         return {
             'success': True,
             'target_id': target_id,
-            'beacon_id': f'BEACON-{target_id.split("-")[-1]}',
+            **self._target_links[target_id],
         }
 
     def register_camera(self, camera_id: str, config: Optional[dict] = None) -> dict:
         """Register a new FSOC camera with the backend engine."""
-        if camera_id in self._cameras:
-            return {'success': False, 'error': f'Camera {camera_id} already exists'}
+        if camera_id in self._entity_ids():
+            return {'success': False, 'error': f'Entity {camera_id} already exists'}
         
         cc = config or {}
         camera = Camera(CameraConfig(
@@ -267,8 +281,10 @@ class SimulationEngine:
 
     def register_satellite(self, satellite_id: str, camera_id: str) -> dict:
         """Register a satellite with its associated FSOC camera."""
-        if satellite_id in self._satellites:
-            return {'success': False, 'error': f'Satellite {satellite_id} already exists'}
+        if satellite_id in self._entity_ids():
+            return {'success': False, 'error': f'Entity {satellite_id} already exists'}
+        if camera_id == satellite_id or (camera_id in self._entity_ids() and camera_id not in self._cameras):
+            return {'success': False, 'error': f'Camera ID {camera_id} conflicts with an existing entity'}
         
         if camera_id not in self._cameras:
             # Auto-create camera if it doesn't exist
@@ -282,8 +298,17 @@ class SimulationEngine:
         
         return {'success': True, 'satellite_id': satellite_id, 'camera_id': camera_id}
 
+    def _entity_ids(self) -> set[str]:
+        """All IDs share one namespace; type collisions are invalid as duplicates."""
+        return (
+            set(self._targets)
+            | set(self._cameras)
+            | set(self._satellites)
+            | {link['beacon_id'] for link in self._target_links.values()}
+        )
+
     def get_entity_registry(self) -> dict:
-        """Return the current entity registry for frontend synchronization."""
+        """Return the authoritative typed entity graph for every consumer."""
         # Resolve the active camera: find whichever registered satellite
         # owns the camera that is currently configured on self._camera.
         # Fall back to 'FSOC-CAM-01' if the registry hasn't been populated.
@@ -292,13 +317,58 @@ class SimulationEngine:
              if sat.get('is_active')),
             next(iter(self._cameras), 'FSOC-CAM-01'),
         )
+        entities: list[dict] = []
+        for satellite_id, satellite in self._satellites.items():
+            entities.append({
+                'id': satellite_id, 'type': 'satellite', 'name': satellite_id,
+                'cameraId': satellite['camera_id'],
+            })
+        for camera_id in self._cameras:
+            host = next((sid for sid, sat in self._satellites.items()
+                         if sat['camera_id'] == camera_id), None)
+            entities.append({
+                'id': camera_id, 'type': 'fsoc_camera', 'name': camera_id,
+                'hostSatelliteId': host,
+            })
+        for target_id, link in self._target_links.items():
+            entities.append({
+                'id': target_id, 'type': 'target', 'name': target_id,
+                'beaconId': link['beacon_id'], 'hostSatelliteId': link['satellite_id'],
+            })
+            entities.append({
+                'id': link['beacon_id'], 'type': 'beacon', 'name': link['beacon_id'],
+                'parentTargetId': target_id,
+            })
+        self._validate_entity_graph(entities)
         return {
             'targets': list(self._targets.keys()),
             'cameras': list(self._cameras.keys()),
             'satellites': list(self._satellites.keys()),
+            'target_links': self._target_links,
+            'entities': entities,
+            'active_tracking_session': self._active_tracking_session,
             'active_target': self._target.config.id if self._target else None,
             'active_camera': active_camera,
         }
+
+    @staticmethod
+    def _validate_entity_graph(entities: list[dict]) -> None:
+        """Development-time fail-fast diagnostics for relationship corruption."""
+        by_id = {entity['id']: entity for entity in entities}
+        if len(by_id) != len(entities):
+            raise RuntimeError('[ASTERIA STATE ERROR] duplicate entity ID in registry')
+        allowed = {'target', 'beacon', 'satellite', 'fsoc_camera'}
+        for entity in entities:
+            if entity.get('type') not in allowed:
+                raise RuntimeError(f"[ASTERIA STATE ERROR] {entity['id']} has invalid type")
+            if entity['type'] == 'target':
+                beacon = by_id.get(entity.get('beaconId'))
+                if not beacon or beacon.get('type') != 'beacon' or beacon.get('parentTargetId') != entity['id']:
+                    raise RuntimeError(f"[ASTERIA STATE ERROR] invalid beacon relationship for {entity['id']}")
+            if entity['type'] == 'satellite':
+                camera = by_id.get(entity.get('cameraId'))
+                if not camera or camera.get('hostSatelliteId') != entity['id']:
+                    raise RuntimeError(f"[ASTERIA STATE ERROR] invalid camera relationship for {entity['id']}")
 
     async def start(self, config: Optional[dict] = None,
                     demo_mode: bool = False) -> str:
@@ -348,23 +418,49 @@ class SimulationEngine:
         self._finalize_run('aborted')
         self._emit_event('warning', 'SIMULATION STOPPED')
 
-    async def _send_stop_telemetry(self) -> None:
-        """Send a final telemetry frame with stopped status to frontend."""
+    async def _send_stop_telemetry(self, scenario_reset: bool = False) -> None:
+        """Send a final, non-destructive scene snapshot when tracking stops."""
         if not self._broadcast:
             return
         try:
             now = time.time()
+            target_snapshots = []
+            for target_id, target in self._targets.items():
+                link = self._target_links.get(target_id, {})
+                snapshot = target.state_dict(now)
+                snapshot['image_position'] = None
+                snapshot['is_primary'] = target is self._target
+                snapshot['entity'] = {
+                    'id': target_id, 'type': 'target',
+                    'beaconId': link.get('beacon_id'),
+                    'hostSatelliteId': link.get('satellite_id'),
+                }
+                snapshot['beacon'] = {
+                    'id': link.get('beacon_id'), 'type': 'beacon',
+                    'parentTargetId': target_id,
+                    'size_px': target.config.beacon_size_px,
+                    'shape': target.config.beacon_shape,
+                    'intensity': target.config.intensity,
+                }
+                target_snapshots.append(snapshot)
+            active_snapshot = next(
+                (snapshot for snapshot in target_snapshots if snapshot['is_primary']),
+                target_snapshots[0] if target_snapshots else None,
+            )
             telemetry = {
                 'type': 'telemetry',
                 'payload': {
                     'timestamp': now,
                     'frame_id': self._frame_id,
                     'elapsed': round(self._elapsed, 3),
-                    'sim_status': 'stopped',
+                    'sim_status': 'idle' if scenario_reset else 'stopped',
+                    'scenario_reset': scenario_reset,
                     'source': 'virtual',
                     'target_state': 'IDLE',
-                    'target': self._target.state_dict(now) if self._target else None,
-                    'targets': [],
+                    # STOP terminates control loops, not scene entities.
+                    'target': active_snapshot,
+                    'targets': target_snapshots,
+                    'tracking_session': self._active_tracking_session,
                     'centroiding_error': {},
                     'pixel_error': {},
                     'target_offset': self._target_offset.as_dict(),
@@ -391,6 +487,40 @@ class SimulationEngine:
         await self.stop()
         self._reset_state()
         self._stopped = False  # Reset stopped flag after reset
+
+    async def end_demo(self) -> None:
+        """End the runtime scenario and restore only the clean default graph.
+
+        Unlike stop(), this deliberately discards dynamically registered
+        targets, beacons, satellites, cameras and the active tracking session.
+        """
+        await self.stop()
+        self._target = Target(DEFAULT_TARGET)
+        self._camera = Camera(DEFAULT_CAMERA)
+        self._targets = {}
+        self._cameras = {}
+        self._satellites = {}
+        self._target_links = {}
+        self._install_default_entity_graph()
+        self._secondary_target = None
+        self._active_tracking_session = None
+        self._tracking_session_id = 0
+        self._run_id = None
+        self._stopped = False
+        self._reset_state()
+        self._emit_event('info', 'DEMO ENDED — RUNTIME SCENARIO CLEARED')
+        await self._send_stop_telemetry(scenario_reset=True)
+
+    def _install_default_entity_graph(self) -> None:
+        """Install fresh default objects; no mutable runtime objects are reused."""
+        self._targets[DEFAULT_TARGET.id] = self._target
+        self._cameras['FSOC-CAM-01'] = self._camera
+        self._satellites['SAT-01'] = {
+            'camera_id': 'FSOC-CAM-01', 'created_at': time.time(), 'is_active': True,
+        }
+        self._target_links[DEFAULT_TARGET.id] = {
+            'satellite_id': 'SAT-01', 'camera_id': 'FSOC-CAM-01', 'beacon_id': 'BEACON-01',
+        }
 
     # Disturbance sections in stable order: (config key, label)
     DISTURBANCE_SECTIONS = (
@@ -530,6 +660,8 @@ class SimulationEngine:
         velocity: Optional[dict] = None,
         trajectory: str = "static",
         beacon_offset: Optional[dict] = None,
+        satellite_id: Optional[str] = None,
+        camera_id: Optional[str] = None,
     ) -> None:
         """Switch coarse-alignment tracking objective to target_id.
         Re-initializes the active tracked target, resets ALL per-target state
@@ -556,20 +688,51 @@ class SimulationEngine:
         resolved_traj = traj_map.get(trajectory.lower(), 'static') \
             if isinstance(trajectory, str) else 'static'
 
-        self._target = Target(TargetConfig(
-            id=target_id,
-            initial_position=Vec3(_safe_float(init_pos, 'x', 0.0), _safe_float(init_pos, 'y', 0.0), _safe_float(init_pos, 'z', 350.0)),
-            velocity=Vec3(_safe_float(init_vel, 'x', 0.0), _safe_float(init_vel, 'y', 0.0), _safe_float(init_vel, 'z', 0.0)),
-            trajectory=resolved_traj,
-            intensity=0.95,
-            beacon_size_px=10.0,
-            beacon_shape='square',
-            beacon_offset=Vec3(_safe_float(bo, 'x', 0.0), _safe_float(bo, 'y', 0.0), _safe_float(bo, 'z', 0.0)),
-            amplitude_h=80.0,
-            amplitude_v=40.0,
-            period=20.0,
-        ))
+        link = self._target_links.get(target_id, {})
+        resolved_camera_id = camera_id or link.get('camera_id', 'FSOC-CAM-01')
+        resolved_satellite_id = satellite_id or link.get('satellite_id', 'SAT-01')
+        if resolved_camera_id not in self._cameras:
+            self.register_camera(resolved_camera_id)
+        self._camera = self._cameras[resolved_camera_id]
+        for sat in self._satellites.values():
+            sat['is_active'] = False
+        if resolved_satellite_id not in self._satellites:
+            self.register_satellite(resolved_satellite_id, resolved_camera_id)
+        self._satellites[resolved_satellite_id]['is_active'] = True
+
+        # Tracking selects a registered target by ID.  It never replaces a
+        # different target object (the prior cause of TARGET-01 becoming
+        # TARGET-02 in the renderer).  An unregistered ID remains supported
+        # for API compatibility, but receives one fresh target instance.
+        if target_id not in self._targets:
+            self._targets[target_id] = Target(TargetConfig(
+                id=target_id,
+                initial_position=Vec3(_safe_float(init_pos, 'x', 0.0), _safe_float(init_pos, 'y', 0.0), _safe_float(init_pos, 'z', 350.0)),
+                velocity=Vec3(_safe_float(init_vel, 'x', 0.0), _safe_float(init_vel, 'y', 0.0), _safe_float(init_vel, 'z', 0.0)),
+                trajectory=resolved_traj,
+                intensity=0.95,
+                beacon_size_px=10.0,
+                beacon_shape='square',
+                beacon_offset=Vec3(_safe_float(bo, 'x', 0.0), _safe_float(bo, 'y', 0.0), _safe_float(bo, 'z', 0.0)),
+                amplitude_h=80.0,
+                amplitude_v=40.0,
+                period=20.0,
+            ))
+        self._target = self._targets[target_id]
         self._target_offset = Vec3(0.0, 0.0, 0.0)
+        self._target_links[target_id] = {
+            'satellite_id': resolved_satellite_id,
+            'camera_id': resolved_camera_id,
+            'beacon_id': link.get('beacon_id', f'BEACON-{target_id.split("-")[-1]}'),
+        }
+        self._tracking_session_id += 1
+        self._active_tracking_session = {
+            'id': self._tracking_session_id,
+            'targetId': target_id,
+            'beaconId': self._target_links[target_id]['beacon_id'],
+            'satelliteId': resolved_satellite_id,
+            'cameraId': resolved_camera_id,
+        }
 
         # ── Critical: reset ALL per-target state ─────────────────────
         # Without this, accumulated missed_frames from the previous target
@@ -601,11 +764,32 @@ class SimulationEngine:
 
         if hasattr(self._detector, 'set_target'):
             self._detector.set_target(
-                self._target.config.id,
+                self._target_links[target_id]['beacon_id'],
                 self._target.config.beacon_size_px,
             )
         self._emit_event('info', f'TRACK TARGET — {target_id}')
         self._emit_event('info', f'ACQUISITION STARTED — SEARCHING FOR {target_id}')
+
+    def move_target(self, target_id: str, position: Optional[dict]) -> dict:
+        """Manually relocate one registered target (operator gizmo/panel move).
+
+        Re-anchors that target's trajectory origin and places it there
+        immediately. No other target, satellite, camera, or tracking state
+        is touched: beacons follow via beacon_offset, and the FSOC camera
+        reacts through the normal detection → Kalman → PID pipeline.
+        """
+        target = self._targets.get(target_id)
+        if target is None:
+            return {'success': False, 'error': f'Unknown target {target_id}'}
+        pos = position if isinstance(position, dict) else {}
+        cur = target.position
+        x = _safe_float(pos, 'x', cur.x)
+        y = _safe_float(pos, 'y', cur.y)
+        z = _safe_float(pos, 'z', cur.z)
+        target.relocate(x, y, z)
+        self._emit_event('info', f'TARGET MOVED — {target_id} → ({x:.1f}, {y:.1f}, {z:.1f})')
+        return {'success': True, 'target_id': target_id,
+                'position': {'x': x, 'y': y, 'z': z}}
 
     def reacquire(self) -> None:
         """Force a fresh acquisition attempt from any state (including LOST).
@@ -687,18 +871,45 @@ class SimulationEngine:
             dist_state = self._disturbances.update(dt)
             self._target.update(dt, dist_state['velocity_variation'])
 
-            # Secondary target update if multi-target is enabled
-            sec_dict = None
-            if self._secondary_target:
-                self._secondary_target.update(dt, dist_state['velocity_variation'])
-                sec_proj = self._camera.project_world_to_pixel(self._secondary_target.position)
-                sec_vis = sec_proj is not None and self._secondary_target.visible
-                sec_dict = self._secondary_target.state_dict(now)
-                sec_dict['image_position'] = (
-                    {'x': round(sec_proj[0], 2), 'y': round(sec_proj[1], 2)}
-                    if sec_vis else None
+            # Every registered target owns an independent Target instance,
+            # clock and transform. Tracking only identifies `self._target`;
+            # it never suspends or overwrites the other trajectories.
+            for target_id, target in self._targets.items():
+                if target is not self._target:
+                    target.update(dt, dist_state['velocity_variation'])
+
+            # Build independent telemetry records for all non-tracked targets.
+            # They are never aliases of the active target record.
+            other_target_dicts = []
+            for target_id, target in self._targets.items():
+                if target is self._target:
+                    continue
+                other_pos = Vec3(
+                    target.position.x + target.config.beacon_offset.x,
+                    target.position.y + target.config.beacon_offset.y,
+                    target.position.z + target.config.beacon_offset.z,
                 )
-                sec_dict['is_primary'] = False
+                other_proj = self._camera.project_world_to_pixel(other_pos)
+                other_dict = target.state_dict(now)
+                other_dict['image_position'] = (
+                    {'x': round(other_proj[0], 2), 'y': round(other_proj[1], 2)}
+                    if other_proj is not None and target.visible else None
+                )
+                other_dict['is_primary'] = False
+                other_link = self._target_links.get(target_id, {})
+                other_dict['entity'] = {
+                    'id': target_id, 'type': 'target',
+                    'beaconId': other_link.get('beacon_id'),
+                    'hostSatelliteId': other_link.get('satellite_id'),
+                }
+                other_dict['beacon'] = {
+                    'id': other_link.get('beacon_id'), 'type': 'beacon',
+                    'parentTargetId': target_id,
+                    'size_px': target.config.beacon_size_px,
+                    'shape': target.config.beacon_shape,
+                    'intensity': target.config.intensity,
+                }
+                other_target_dicts.append(other_dict)
 
             # ── Camera disturbance ─────────────────────────
             if dist_state['dpan'] != 0 or dist_state['dtilt'] != 0:
@@ -723,7 +934,17 @@ class SimulationEngine:
                 if target_visible else None
             )
             target_dict['is_primary'] = True
+            active_link = self._target_links.get(self._target.config.id, {})
+            target_dict['entity'] = {
+                'id': self._target.config.id,
+                'type': 'target',
+                'beaconId': active_link.get('beacon_id'),
+                'hostSatelliteId': active_link.get('satellite_id'),
+            }
             target_dict['beacon'] = {
+                'id': active_link.get('beacon_id'),
+                'type': 'beacon',
+                'parentTargetId': self._target.config.id,
                 'size_px': self._target.config.beacon_size_px,
                 'shape': self._target.config.beacon_shape,
                 'intensity': self._target.config.intensity,
@@ -904,9 +1125,7 @@ class SimulationEngine:
                 )
 
             # ── Broadcast telemetry ────────────────────────
-            targets_list = [target_dict]
-            if sec_dict:
-                targets_list.append(sec_dict)
+            targets_list = [target_dict, *other_target_dicts]
 
             telemetry = {
                 'type': 'telemetry',
@@ -918,6 +1137,7 @@ class SimulationEngine:
                     'source': 'virtual',
                     'target_state': self._target_state,
                     'target': target_dict,
+                    'tracking_session': self._active_tracking_session,
                     'targets': targets_list,
                     'centroiding_error': centroid_err_dict,
                     'pixel_error': pixel_err_dict,
@@ -1098,7 +1318,7 @@ class SimulationEngine:
                 from simulation.target import random_initial_position
                 init_pos = random_initial_position(tc.get('seed')).as_dict()
             self._target = Target(TargetConfig(
-                id=tc.get('id', 'BEACON-01'),
+                id=tc.get('id', 'TARGET-01'),
                 initial_position=Vec3(**init_pos),
                 velocity=Vec3(**tc.get('velocity', {'x': 6.0, 'y': 0.3, 'z': 0.0})),
                 trajectory=tc.get('trajectory', 'linear'),
@@ -1112,6 +1332,19 @@ class SimulationEngine:
             ))
         else:
             self._target = Target(DEFAULT_TARGET)
+        # A scenario may supply a named target; keep its explicit relationship
+        # in the same registry used by the renderer and tracking controller.
+        configured_link = self._target_links.get(self._target.config.id)
+        if configured_link is None:
+            beacon_id = (config.get('target') or {}).get('beacon_id')
+            if not beacon_id:
+                raise ValueError(f'[ASTERIA STATE ERROR] target {self._target.config.id} requires beacon_id')
+            self._target_links[self._target.config.id] = {
+                'satellite_id': (config.get('target') or {}).get('satellite_id', 'SAT-01'),
+                'camera_id': (config.get('target') or {}).get('camera_id', 'FSOC-CAM-01'),
+                'beacon_id': beacon_id,
+            }
+        self._targets[self._target.config.id] = self._target
         self._target_offset = Vec3(0.0, 0.0, 0.0)
         self._lock_count = 0
         self._search_t = 0.0
@@ -1119,7 +1352,7 @@ class SimulationEngine:
         # Detector labels/spot-size follow the configured beacon
         if hasattr(self._detector, 'set_target'):
             self._detector.set_target(
-                self._target.config.id,
+                self._target_links.get(self._target.config.id, {}).get('beacon_id', 'BEACON-01'),
                 self._target.config.beacon_size_px,
             )
 
@@ -1132,7 +1365,7 @@ class SimulationEngine:
                 self._target.config.initial_position.z + 50.0,
             )
             self._secondary_target = Target(TargetConfig(
-                id='BEACON-02',
+                id='TARGET-02',
                 initial_position=sec_init,
                 velocity=Vec3(1.6, -0.7, 0.0),
                 trajectory='figure_8' if self._target.config.trajectory != 'figure_8' else 'circular',
