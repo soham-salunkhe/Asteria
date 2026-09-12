@@ -26,6 +26,26 @@ from typing import Optional, Callable, Awaitable
 # Thread pool for offloading blocking I/O (SQLite writes) off the event loop
 _DB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='fsoc-db')
 
+
+def _safe_float(mapping, key: str, default: float) -> float:
+    """Read a numeric field from an incoming payload dict.
+
+    Never raises and never returns NaN/inf/None: malformed values
+    (null from JSON, strings, NaN) fall back to `default`. Without this,
+    a single bad value turns the whole REST call into an HTTP 500 and
+    the TRACK TARGET request is silently dropped — the UI then keeps
+    showing the previous target's (stale) state.
+    """
+    if not isinstance(mapping, dict):
+        return default
+    try:
+        v = float(mapping.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    return v
+
 # Import authoritative PS169 tracking thresholds — shared with VideoProcessor
 from tracking_constants import (
     TARGET_LOCK_THRESHOLD_PX as _TLT_PX,
@@ -516,9 +536,9 @@ class SimulationEngine:
         (including missed_frames so we never enter LOST on the first tick),
         and slews the virtual camera toward the new target's angular position.
         """
-        init_pos = position or {'x': 0.0, 'y': 0.0, 'z': 350.0}
-        init_vel = velocity or {'x': 0.0, 'y': 0.0, 'z': 0.0}
-        bo = beacon_offset or {'x': 0.0, 'y': 0.0, 'z': 0.0}
+        init_pos = position if isinstance(position, dict) else {}
+        init_vel = velocity if isinstance(velocity, dict) else {}
+        bo = beacon_offset if isinstance(beacon_offset, dict) else {}
 
         traj_map = {
             'static': 'static',
@@ -533,17 +553,18 @@ class SimulationEngine:
             'random': 'random_walk',
             'random_walk': 'random_walk',
         }
-        resolved_traj = traj_map.get(trajectory.lower(), 'static')
+        resolved_traj = traj_map.get(trajectory.lower(), 'static') \
+            if isinstance(trajectory, str) else 'static'
 
         self._target = Target(TargetConfig(
             id=target_id,
-            initial_position=Vec3(float(init_pos.get('x', 0)), float(init_pos.get('y', 0)), float(init_pos.get('z', 350))),
-            velocity=Vec3(float(init_vel.get('x', 0)), float(init_vel.get('y', 0)), float(init_vel.get('z', 0))),
+            initial_position=Vec3(_safe_float(init_pos, 'x', 0.0), _safe_float(init_pos, 'y', 0.0), _safe_float(init_pos, 'z', 350.0)),
+            velocity=Vec3(_safe_float(init_vel, 'x', 0.0), _safe_float(init_vel, 'y', 0.0), _safe_float(init_vel, 'z', 0.0)),
             trajectory=resolved_traj,
             intensity=0.95,
             beacon_size_px=10.0,
             beacon_shape='square',
-            beacon_offset=Vec3(float(bo.get('x', 0)), float(bo.get('y', 0)), float(bo.get('z', 0))),
+            beacon_offset=Vec3(_safe_float(bo, 'x', 0.0), _safe_float(bo, 'y', 0.0), _safe_float(bo, 'z', 0.0)),
             amplitude_h=80.0,
             amplitude_v=40.0,
             period=20.0,
