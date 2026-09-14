@@ -81,6 +81,10 @@ export const fsocApi = {
   moveTarget: (targetId: string, position: { x: number; y: number; z: number }) =>
     post<{ success: boolean; target_id: string }>('/api/simulation/move_target', { target_id: targetId, position }),
 
+  // Live trajectory change for a registered target (no restart).
+  setTargetTrajectory: (targetId: string, trajectory: string) =>
+    post<{ success: boolean; target_id: string; trajectory: string }>('/api/simulation/target_trajectory', { target_id: targetId, trajectory }),
+
   // Entity registration
   registerTarget: (targetId: string, config?: unknown) =>
     post<{ success: boolean; target_id: string; beacon_id: string }>('/api/simulation/register_target', { target_id: targetId, config }),

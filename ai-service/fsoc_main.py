@@ -122,7 +122,7 @@ class SwitchTargetRequest(BaseModel):
     target_id: str = "TARGET-01"
     position: Optional[dict] = None
     velocity: Optional[dict] = None
-    trajectory: str = "static"
+    trajectory: Optional[str] = None
     beacon_offset: Optional[dict] = None
     satellite_id: Optional[str] = None
     camera_id: Optional[str] = None
@@ -136,6 +136,15 @@ class RegisterTargetRequest(BaseModel):
 class MoveTargetRequest(BaseModel):
     target_id: str
     position: Optional[dict] = None
+
+
+class TargetTrajectoryRequest(BaseModel):
+    target_id: str
+    trajectory: str = 'static'
+    amplitude_h: Optional[float] = None
+    amplitude_v: Optional[float] = None
+    period: Optional[float] = None
+    velocity: Optional[dict] = None
 
 
 class RegisterCameraRequest(BaseModel):
@@ -272,6 +281,19 @@ def move_target(req: MoveTargetRequest):
     the FSOC camera reacts through detection → Kalman → PID.
     """
     result = engine.move_target(req.target_id, req.position)
+    if not result.get('success'):
+        raise HTTPException(404, result.get('error', 'Unknown target'))
+    return result
+
+
+@app.post('/api/simulation/target_trajectory')
+def set_target_trajectory(req: TargetTrajectoryRequest):
+    """Change a registered target's trajectory live (no restart)."""
+    result = engine.set_target_trajectory(
+        req.target_id, req.trajectory,
+        amplitude_h=req.amplitude_h, amplitude_v=req.amplitude_v,
+        period=req.period, velocity=req.velocity,
+    )
     if not result.get('success'):
         raise HTTPException(404, result.get('error', 'Unknown target'))
     return result

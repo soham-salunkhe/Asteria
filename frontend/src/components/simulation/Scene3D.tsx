@@ -2111,8 +2111,9 @@ export default function Scene3D({ frame, history }: Props) {
   };
 
   // Track a backend-owned target by ID. The backend resolves the stored
-  // target → beacon → satellite → camera relationship and opens a tracking
-  // session; no position payload is needed (and ignored) for registered ids.
+  // target → beacon → satellite → camera relationship, performs a coarse
+  // slew onto the beacon, and opens a tracking session. No position
+  // payload is sent, so the live trajectory origin is preserved.
   // Selection state is deliberately untouched — tracking and selection are
   // independent concepts.
   const trackBackendTarget = async (tid: string) => {
@@ -2686,6 +2687,31 @@ export default function Scene3D({ frame, history }: Props) {
               <div style={{ borderBottom: '1px solid #233544', paddingBottom: 6, marginBottom: 6 }}>
                 <PropRow label="MOTION" value={((backendTraj as string) || 'LIVE TRAJECTORY').toUpperCase()} />
                 <PropRow label="TRACKING" value={tstate} />
+                <div style={{ color: '#8d9195', fontSize: 10, margin: '6px 0 3px' }}>TRAJECTORY (LIVE)</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                  {[
+                    ['static', 'STATIC'], ['linear', 'STRAIGHT'], ['circular', 'CIRCULAR'],
+                    ['sinusoidal', 'SINUSOID'], ['figure_8', 'FIG-8'], ['random_walk', 'RANDOM'],
+                  ].map(([val, label]) => (
+                    <button
+                      key={val}
+                      style={{
+                        ...chipBtn,
+                        padding: '3px 4px',
+                        fontSize: 9,
+                        pointerEvents: 'auto',
+                        textAlign: 'center',
+                      }}
+                      onClick={() => {
+                        const tid = selectedBackendTargetId ?? liveTargetId;
+                        if (tid) fsocApi.setTargetTrajectory(tid, val).catch(console.error);
+                      }}
+                      title={`Set ${(selectedBackendTargetId ?? liveTargetId ?? 'target') as string} trajectory → ${val}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 

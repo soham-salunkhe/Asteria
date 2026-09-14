@@ -58,7 +58,6 @@ def run_case(name, traj, init, vel, amp_h=8.0, amp_v=5.0, period=14.0,
     search_t = 0.0
     search_pan0, search_tilt0 = 0.0, 0.0
     n_hand = 0
-    n_sweep_frames = 0
     LOST_GRACE = int(FPS * 3.0)  # engine LOST_GRACE_SECONDS
 
     def slew(des_pan, des_tilt):
@@ -123,13 +122,15 @@ def run_case(name, traj, init, vel, amp_h=8.0, amp_v=5.0, period=14.0,
             cam.apply_correction(dp, dq, dt)
             ang = math.hypot(pan_err, tilt_err)
         else:
-            # Expanding anchored sweep (engine mirror): dense local scan
-            # around last-known pointing, widening to full envelope.
+            # Expanding anchored Lissajous (engine mirror): incommensurate
+            # pan/tilt frequencies for ergodic coverage around the anchor.
             out = pid.coast()
             search_t += dt
-            ramp = min(1.0, search_t / 90.0)
-            slew(search_pan0 + (8.0 + 52.0 * ramp) * math.sin(0.18 * search_t),
-                 search_tilt0 + (3.0 + 17.0 * ramp) * math.sin(0.12 * search_t))
+            ramp = min(1.0, search_t / 30.0)
+            pan_amp = 8.0 + (180.0 - 8.0) * ramp
+            tilt_amp = 3.0 + (45.0 - 3.0) * ramp
+            slew(search_pan0 + pan_amp * math.sin(0.18 * search_t),
+                 search_tilt0 + tilt_amp * math.sin(0.13 * search_t))
             ang = 0.0
         # state machine (mirror of engine, incl. LOST recovery behaviour)
         if detection and meas is not None:
