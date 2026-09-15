@@ -28,6 +28,7 @@ from tracking_constants import (
     LOCK_FRAMES_REQUIRED,
     ACQUIRING_THRESHOLD_PX,
     LOST_GRACE_SECONDS,
+    pixel_error_to_gimbal_error,
 )
 from simulation.target import Target, TargetConfig, Vec3
 from simulation.camera import Camera, CameraConfig
@@ -74,6 +75,49 @@ def camera():
 @pytest.fixture
 def rng():
     return np.random.default_rng(0)
+
+
+@pytest.mark.parametrize(
+    ('centroid', 'expected_pan_sign', 'expected_tilt_sign'),
+    [
+        # Positive tilt raises the optical axis, moving a fixed beacon down
+        # in an image whose Y axis increases downward.
+        ((320.0, 6.0), 0, 1),       # above centre -> move beacon down
+        ((320.0, 474.0), 0, -1),    # below centre -> move beacon up
+        ((20.0, 240.0), -1, 0),     # left of centre -> move beacon right
+        ((620.0, 240.0), 1, 0),     # right of centre -> move beacon left
+    ],
+)
+def test_pixel_to_gimbal_direction_convention(centroid, expected_pan_sign, expected_tilt_sign):
+    """The only image-Y inversion is at the image -> elevation boundary."""
+    error_x, error_y = centroid[0] - 320.0, centroid[1] - 240.0
+    pan_error, tilt_error = pixel_error_to_gimbal_error(error_x, error_y)
+    if expected_pan_sign:
+        assert math.copysign(1, pan_error) == expected_pan_sign
+    else:
+        assert pan_error == 0
+    if expected_tilt_sign:
+        assert math.copysign(1, tilt_error) == expected_tilt_sign
+    else:
+        assert tilt_error == 0
+
+
+def test_virtual_camera_aim_converges_without_moving_fixed_video_coordinates():
+    """PID moves camera aim to the fixed detected beacon, not video pixels."""
+    pid = PIDController(PIDConfig())
+    beacon_x, beacon_y = 150.0, 100.0
+    pan = tilt = 0.0
+    errors = []
+    for _ in range(25):
+        aim_x, aim_y = 320.0 + pan * 160.0, 240.0 - tilt * 160.0
+        ex, ey = beacon_x - aim_x, beacon_y - aim_y
+        errors.append(math.hypot(ex, ey))
+        pan_error, tilt_error = pixel_error_to_gimbal_error(ex, ey)
+        command = pid.update(pan_error, tilt_error, 1 / 30)
+        pan += command['pan_correction']
+        tilt += command['tilt_correction']
+    assert all(next_error < error for error, next_error in zip(errors, errors[1:]))
+    assert errors[-1] < 15.0
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────

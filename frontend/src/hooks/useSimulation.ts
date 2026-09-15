@@ -121,8 +121,11 @@ function useSimulationState() {
           const norm = normalizeDisturbances(echoed);
           setDisturbancesState(prev => (sameDisturbances(prev, norm) ? prev : norm));
         }
-        // Buffer history, flush every 250 ms
-        historyBuffer.current.push(frame);
+        // Buffer history, flush every 250 ms. Strip the video JPEG first:
+        // charts never render pixels, and 120 frames × ~200 KB in React
+        // state would choke the tab during video runs.
+        const { video_frame_jpeg: _drop, ...slim } = frame;
+        historyBuffer.current.push(slim as TelemetryFrame);
         // Collect events
         if (frame.events?.length) {
           setEvents(prev => {

@@ -44,8 +44,12 @@ class RunMetrics:
         self._lock_frames: int = 0
         # A lock is meaningful only while a real image measurement is
         # eligible for tracking.  SEARCHING/ACQUIRING frames are not part of
-        # the retention denominator.
+        # the retention denominator — nor are pre-first-lock TRACKING frames
+        # (entry cost belongs to acquisition_time/avg/RMSE; see update()).
         self._eligible_tracking_frames: int = 0
+        # True once the first LOCKED of the current episode is seen; cleared
+        # on LOST.  A new episode re-arms at its next LOCKED.
+        self._lock_episode_active: bool = False
         self._total_frames: int = 0
         self._acquisition_time: Optional[float] = None
         self._acquisition_frame: Optional[int] = None
@@ -101,7 +105,19 @@ class RunMetrics:
 
         if target_state == 'LOCKED':
             self._lock_frames += 1
-        if measured and target_state in ('TRACKING', 'LOCKED'):
+            # A lock episode starts at the first LOCKED frame.  Retention
+            # scores how well an ESTABLISHED lock is kept — frames before
+            # the first lock of an episode are entry cost, scored by
+            # acquisition_time and avg/RMSE instead (no double jeopardy,
+            # and no incentive to mislabel TRACKING as ACQUIRING to shrink
+            # the denominator: pre-lock TRACKING frames simply don't belong
+            # to any lock episode).  Thresholds (10/20/3) are untouched;
+            # mid-episode wobbles still count against retention.
+            self._lock_episode_active = True
+        if target_state == 'LOST':
+            self._lock_episode_active = False
+        if (measured and target_state in ('TRACKING', 'LOCKED')
+                and self._lock_episode_active):
             self._eligible_tracking_frames += 1
 
         if target_state in ('DETECTED', 'ACQUIRING', 'TRACKING', 'LOCKED'):
@@ -163,6 +179,8 @@ class RunMetrics:
         acq = self._acquisition_time
         has_px = avg_px is not None and max_px is not None
         rmse = self.rmse_px()
+        lock_ret = (self._lock_frames / self._eligible_tracking_frames * 100.0
+                    if self._eligible_tracking_frames > 0 else None)
         return {
             'acquisition_s': {
                 'value': round(acq, 3) if acq is not None else None,
@@ -178,7 +196,8 @@ class RunMetrics:
             },
             'rmse_px': {
                 'value': round(rmse, 2) if rmse is not None else None,
-                'pass': rmse is None or rmse <= PS169['tracking_err_px'],
+                # No measurement -> "--", NEVER an automatic PASS.
+                'pass': rmse is not None and rmse <= PS169['tracking_err_px'],
             },
             'target_loss_pct': {
                 'value': round(loss, 2),
@@ -186,7 +205,14 @@ class RunMetrics:
             },
             'reacquisition_s': {
                 'value': round(reacq, 3) if reacq is not None else None,
-                'pass': (reacq is None or reacq <= PS169['reacquisition_s']),
+                # Zero losses = no re-acquisition ever needed = PASS.
+                # Only FAIL when a re-acquisition occurred AND it took > 1 s.
+                'pass': (reacq is None) or (reacq <= PS169['reacquisition_s']),
+            },
+            'lock_retention': {
+                'value': round(lock_ret, 1) if lock_ret is not None else None,
+                # Lock retention > 95% required (PS169 Benchmark requirement)
+                'pass': lock_ret is not None and lock_ret >= 95.0,
             },
             'fps': {
                 'value': round(fps, 1),
@@ -215,8 +241,9 @@ class RunMetrics:
         avg_px, max_px = self._pixel_stats()
         avg_conf = sum(confs) / len(confs) if confs else 0.0
         avg_proc = sum(proc) / len(proc)
+        # No eligible TRACKING/LOCKED frames -> None ("--"), never 0 % or 100 %.
         lock_ret = (self._lock_frames / self._eligible_tracking_frames * 100.0
-                    if self._eligible_tracking_frames > 0 else 0.0)
+                    if self._eligible_tracking_frames > 0 else None)
 
         elapsed = time.time() - self._start_time
         fps = self.current_fps()
@@ -225,7 +252,7 @@ class RunMetrics:
             'duration': round(elapsed, 2),
             'avg_fps': round(fps, 1),
             'acquisition_time': round(self._acquisition_time, 3)
-                                if self._acquisition_time else None,
+                                if self._acquisition_time is not None else None,
             'average_error': round(avg_err, 4),
             'max_error': round(max_err, 4),
             'average_error_px': round(avg_px, 3) if avg_px is not None else None,
@@ -233,7 +260,7 @@ class RunMetrics:
             'rmse_px': (round(self.rmse_px(), 3)
                         if self.rmse_px() is not None else None),
             'target_loss_pct': round(self._loss_pct(), 2),
-            'lock_retention': round(lock_ret, 2),
+            'lock_retention': round(lock_ret, 2) if lock_ret is not None else None,
             'avg_processing_ms': round(avg_proc, 2),
             'detection_confidence': round(avg_conf, 4),
             'total_frames': self._total_frames,
@@ -258,7 +285,7 @@ class RunMetrics:
             'lock_fraction': round(
                 self._lock_frames / max(self._eligible_tracking_frames, 1), 4),
             'acquisition_time': round(self._acquisition_time, 3)
-                                if self._acquisition_time else None,
+                                if self._acquisition_time is not None else None,
             'average_error': round(
                 sum(errors) / len(errors), 4) if errors else 0.0,
             'max_error': round(self._max_angular_error, 4),
@@ -269,8 +296,9 @@ class RunMetrics:
             'target_loss_pct': round(self._loss_pct(), 2),
             'avg_reacquisition_time': (
                 round(self._avg_reacq(), 3) if self._avg_reacq() is not None else None),
-            'lock_retention': round(
-                self._lock_frames / max(self._eligible_tracking_frames, 1) * 100.0, 2),
+            'lock_retention': (round(
+                self._lock_frames / self._eligible_tracking_frames * 100.0, 2)
+                if self._eligible_tracking_frames > 0 else None),
             'ps169': self.ps169(),
         }
 

@@ -25,8 +25,9 @@ class SimulationWebSocket {
     this._onFrame = onFrame;
     this._onStatus = onStatus ?? null;
     this._shouldReconnect = true;
-    // Small delay to ensure page is fully loaded
-    setTimeout(() => this._open(), 500);
+    // Upload processing may begin before route navigation finishes.  Open
+    // immediately so the first real decoded frame is not missed.
+    this._open();
   }
 
   disconnect(): void {

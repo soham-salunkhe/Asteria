@@ -167,14 +167,30 @@ def generate_pdf(run_id: str) -> bytes:
     content.append(section('2. Tracking Performance'))
 
     acq = run.get('acquisition_time')
-    acq_str = f"{acq:.3f} s" if acq else "Not acquired"
+    # NOTE: 0.0 is a real measurement (locked on the first frame) — only
+    # None means "never acquired".  A falsy `if acq` check mislabels 0.0.
+    acq_str = f"{acq:.3f} s" if acq is not None else "Not acquired"
 
     status = run.get('final_state', '')
-    lock_ret = run.get('lock_retention', 0) or 0
+    lock_ret = run.get('lock_retention', None)
+    lock_ret_str = f"{lock_ret:.1f}%" if lock_ret is not None else "— (no tracking samples)"
+    lost_count = run.get('lost_count') or 0
+    reacq_count = run.get('reacquisition_count') or 0
     avg_reacq = run.get('avg_reacquisition_time')
-    avg_reacq_str = f"{avg_reacq:.3f} s" if avg_reacq else "—"
+    # No target loss in the whole run → nothing to re-acquire: the metric
+    # is satisfied, not failed.  A loss with no completed re-acquisition
+    # is a genuine FAIL.  (0.0 s is a real instant re-acquisition.)
+    if avg_reacq is not None:
+        avg_reacq_str = f"{avg_reacq:.3f} s"
+        reacq_pass = avg_reacq <= 1.0
+    elif lost_count == 0:
+        avg_reacq_str = "Not required (no loss)"
+        reacq_pass = True
+    else:
+        avg_reacq_str = "— (lost, never reacquired)"
+        reacq_pass = False
     max_reacq = run.get('max_reacquisition_time')
-    max_reacq_str = f"{max_reacq:.3f} s" if max_reacq else "—"
+    max_reacq_str = f"{max_reacq:.3f} s" if max_reacq is not None else "—"
 
     dur = run.get('duration') or 0.0
     fps_val = run.get('avg_fps') or 0.0
@@ -195,7 +211,7 @@ def generate_pdf(run_id: str) -> bytes:
         ('Avg Tracking Error (px)', _px_str(_avg_px, 'px')),
         ('Max Tracking Error (px)', _px_str(_max_px, 'px')),
         ('RMSE Tracking Error',     _px_str(_rmse_px, 'px')),
-        ('Lock Retention',         f"{lock_ret:.2f}%"),
+        ('Lock Retention',         lock_ret_str),
         ('Target Loss Count',      str(run.get('lost_count') or '—')),
         ('Re-acquisition Count',   str(run.get('reacquisition_count') or '—')),
         ('Detection Confidence',   f"{det_conf:.1f}%"),
@@ -234,11 +250,11 @@ def generate_pdf(run_id: str) -> bytes:
                  _avg_px is not None and _avg_px <= 10.0),
         spec_row('RMSE Tracking Error', '≤ 10 px',
                  f"{_rmse_px:.1f} px" if _rmse_px is not None else '— (no tracking samples)',
-                 _rmse_px is None or _rmse_px <= 10.0),
+                 _rmse_px is not None and _rmse_px <= 10.0),
         spec_row('Re-acquisition Time', '≤ 1.0 s', avg_reacq_str,
-                 avg_reacq is None or avg_reacq <= 1.0),
-        spec_row('Lock Retention', '> 95%', f"{lock_ret:.1f}%",
-                 lock_ret >= 95.0),
+                 reacq_pass),
+        spec_row('Lock Retention', '> 95%', lock_ret_str,
+                 lock_ret is not None and lock_ret >= 95.0),
         spec_row('Processing Speed', '≥ 20 FPS', f"{avg_fps_val:.1f} FPS",
                  avg_fps_val >= 20.0),
         spec_row('Proc Latency (50 ms budget)', '≤ 50 ms', f"{proc_ms_val:.1f} ms",

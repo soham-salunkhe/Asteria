@@ -54,6 +54,23 @@ from tracking_constants import (
     ACQUIRING_THRESHOLD_PX as _ACQ_PX,
     LOST_GRACE_SECONDS as _LGS,
     REACQUIRE_TIMEOUT_SECONDS as _RTS,
+    COAST_SECONDS as _COAST_S,
+    SEARCH_MIN_PAN_DEG as _S_MIN_PAN,
+    SEARCH_MAX_PAN_DEG as _S_MAX_PAN,
+    SEARCH_RAMP_SEC as _S_RAMP,
+    SEARCH_RATE_RAD_PER_SEC as _S_RATE,
+    SEARCH_TILT_RATE_RAD_PER_SEC as _S_TILT_RATE,
+    SEARCH_MIN_TILT_DEG as _S_MIN_TILT,
+    SEARCH_MAX_TILT_DEG as _S_MAX_TILT,
+    PID_KP as _PKP, PID_KI as _PKI, PID_KD as _PKD,
+    PID_MAX_VEL_DEG_PER_SEC as _PMAX, PID_SETTLING_DEG as _PSET,
+    PID_D_FILTER_ALPHA as _PDFA,
+    KALMAN_Q as _KQ, KALMAN_R as _KR, KALMAN_P0 as _KP0,
+    CAMERA_WIDTH as _CW, CAMERA_HEIGHT as _CH,
+    HORIZONTAL_FOV_DEG as _HFOV, VERTICAL_FOV_DEG as _VFOV,
+    CAMERA_FPS as _CFPS,
+    IMAGE_CENTER_X as _CX, IMAGE_CENTER_Y as _CY,
+    validate_ps169_config as _validate_ps169,
 )
 
 from simulation.environment import get_environment, EnvironmentType
@@ -71,12 +88,13 @@ from database import models as db
 # PS169 closed-loop defaults: narrow 4°x3° camera, 30 Hz, straight-line
 # demo target that starts inside the FOV so acquisition is genuine.
 
-DEFAULT_PID = PIDConfig(kp=6.0, ki=0.15, kd=0.6,
-                        max_angular_velocity=5.0, settling_threshold=0.05)
+DEFAULT_PID = PIDConfig(kp=_PKP, ki=_PKI, kd=_PKD,
+                        max_angular_velocity=_PMAX, settling_threshold=_PSET,
+                        derivative_filter_alpha=_PDFA)
 
-DEFAULT_KALMAN = KalmanConfig(process_noise_q=2.0,
-                               measurement_noise_r=5.0,
-                               initial_covariance=500.0)
+DEFAULT_KALMAN = KalmanConfig(process_noise_q=_KQ,
+                               measurement_noise_r=_KR,
+                               initial_covariance=_KP0)
 
 DEFAULT_TARGET = TargetConfig(
     id='TARGET-01',
@@ -92,11 +110,11 @@ DEFAULT_TARGET = TargetConfig(
 
 DEFAULT_CAMERA = CameraConfig(
     position=Vec3(0, 0, 0),
-    fov_h=4.0,
-    fov_v=3.0,
-    resolution_w=640,
-    resolution_h=480,
-    fps=30.0,
+    fov_h=_HFOV,
+    fov_v=_VFOV,
+    resolution_w=_CW,
+    resolution_h=_CH,
+    fps=_CFPS,
     noise_level=0.02,
 )
 
@@ -133,15 +151,15 @@ class SimulationEngine:
     # advancing at a CONSTANT rate below the slew limit, so the camera truly
     # traverses the commanded amplitude; tilt holds centre-out elevation
     # dwells (one full pan revolution each) for systematic raster coverage.
-    SEARCH_SWEEP_MIN_PAN = 12.0   # degrees, initial local-scan amplitude
-    SEARCH_SWEEP_MAX_PAN = 180.0  # degrees, full rotation at full expansion
-    SEARCH_SWEEP_PAN_RAMP_S = 12.0  # seconds from local scan to full pan
+    SEARCH_SWEEP_MIN_PAN = _S_MIN_PAN   # degrees, initial local-scan amplitude
+    SEARCH_SWEEP_MAX_PAN = _S_MAX_PAN  # degrees, full rotation at full expansion
+    SEARCH_SWEEP_PAN_RAMP_S = _S_RAMP  # seconds from local scan to full pan
     # Lissajous angular frequencies (rad/s, incommensurate for ergodic
     # coverage). Faster than the original 0.18/0.13 so a far beacon is
     # swept through the narrow 4°×3° FOV in seconds, not minutes.
     # Motion is always slew-limited to the configured max rate.
-    SEARCH_SWEEP_RATE = 0.55
-    SEARCH_SWEEP_TILT_RATE = 0.42
+    SEARCH_SWEEP_RATE = _S_RATE
+    SEARCH_SWEEP_TILT_RATE = _S_TILT_RATE
     # Tilt envelope expands 3° → 45° over the same ramp; pan/tilt use
     # incommensurate Lissajous frequencies (0.18 / 0.13 rad/s) for ergodic
     # coverage around the episode anchor.
@@ -404,6 +422,24 @@ class SimulationEngine:
 
         self._apply_config(config or {})
         self._reset_state()
+        # PS169 startup parameter validation — fail loudly, never silently
+        # correct invalid values.
+        _cfg_errors = _validate_ps169()
+        _cam = self._camera.config
+        if (_cam.resolution_w, _cam.resolution_h) != (_CW, _CH):
+            _cfg_errors.append(
+                f"Resolution must be {_CW}x{_CH}, got {_cam.resolution_w}x{_cam.resolution_h}")
+        if _cam.fov_h != _HFOV or _cam.fov_v != _VFOV:
+            _cfg_errors.append(
+                f"FOV must be {_HFOV}x{_VFOV} deg, got {_cam.fov_h}x{_cam.fov_v}")
+        if _cfg_errors:
+            for _e in _cfg_errors:
+                self._emit_event('error', f'PARAMETER VALIDATION FAILED — {_e}')
+        else:
+            self._emit_event(
+                'success',
+                f'PARAMETER VALIDATION OK — {_CW}x{_CH} · {_HFOV}°x{_VFOV}° · '
+                f'ACQ≤2s ERR≤10px LOSS<5% REACQ≤1s FPS≥20 · VIDEO {30:.0f}FPS')
         # A new run must never inherit the paused state of the previous one.
         self._paused = False
         self._stopped = False  # Reset stopped flag for new run
@@ -1167,10 +1203,10 @@ class SimulationEngine:
                 self._missed_frames += 1
 
             pred_x, pred_y = self._kalman.predict(dt)
-            kal_dict = self._kalman.state_dict() if self._kalman.is_initialized else None
+            kal_dict = self._kalman.state_dict(dt) if self._kalman.is_initialized else None
 
             # ── Image-space error → angular error (drives the PID) ──
-            cx, cy = img_w / 2.0, img_h / 2.0
+            cx, cy = _CX, _CY  # PS169 image centre (320, 240 at 640x480)
             if detection:
                 mx, my = detection.centroid_x, detection.centroid_y
                 measured_px: Optional[float] = math.sqrt((mx - cx) ** 2 + (my - cy) ** 2)
@@ -1250,7 +1286,7 @@ class SimulationEngine:
                 ramp = min(1.0, self._search_t / self.SEARCH_SWEEP_PAN_RAMP_S)
                 pan_amp = (self.SEARCH_SWEEP_MIN_PAN + (self.SEARCH_SWEEP_MAX_PAN
                            - self.SEARCH_SWEEP_MIN_PAN) * ramp)
-                tilt_amp = 3.0 + (45.0 - 3.0) * ramp
+                tilt_amp = _S_MIN_TILT + (_S_MAX_TILT - _S_MIN_TILT) * ramp
                 sweep_pan = (self._search_pan0 + pan_amp * math.sin(
                     self.SEARCH_SWEEP_RATE * self._search_t))
                 sweep_tilt = (self._search_tilt0 + tilt_amp * math.sin(
@@ -1304,6 +1340,46 @@ class SimulationEngine:
             # ── Broadcast telemetry ────────────────────────
             targets_list = [target_dict, *other_target_dicts]
 
+            # ── Optical diagnostics (measured, never hardcoded) ──
+            # Forward vector is always unit-length; boresight is the true
+            # angular separation; front/FOV/detected gate the pipeline.
+            _fwd = self._camera.optical_forward()
+            _fwd_len = math.sqrt(sum(c * c for c in _fwd))
+            _dir, _in_front, _in_fov = self._camera.beacon_relative(beacon_pos)
+            _boresight = self._camera.boresight_to(beacon_pos)
+            _beam = {'x': round(_fwd[0], 4), 'y': round(_fwd[1], 4), 'z': round(_fwd[2], 4)}
+            optical_dict = {
+                'forward': {'x': round(_fwd[0], 5), 'y': round(_fwd[1], 5), 'z': round(_fwd[2], 5)},
+                'forward_len': round(_fwd_len, 5),
+                'forward_valid': 0.99 <= _fwd_len <= 1.01,
+                'beam_direction': _beam,  # camera -> opticalForward, never camera -> beacon
+                'boresight_deg': round(_boresight, 2) if _boresight is not None else None,
+                'in_front': bool(_in_front),
+                'in_fov': bool(_in_fov),
+                'detected': detection is not None,
+                'centroid': ({'x': round(detection.centroid_x, 2),
+                              'y': round(detection.centroid_y, 2)} if detection else None),
+                'image_center': {'x': _CX, 'y': _CY},
+                'resolution': {'w': img_w, 'h': img_h},
+                'fov': {'h': cam_cfg.fov_h, 'v': cam_cfg.fov_v},
+            }
+            # Search-coverage diagnostic: prove which gimbal region was swept.
+            if not hasattr(self, '_cov_min_pan'):
+                self._cov_min_pan = self._camera.pan
+                self._cov_max_pan = self._camera.pan
+                self._cov_min_tilt = self._camera.tilt
+                self._cov_max_tilt = self._camera.tilt
+            self._cov_min_pan = min(self._cov_min_pan, self._camera.pan)
+            self._cov_max_pan = max(self._cov_max_pan, self._camera.pan)
+            self._cov_min_tilt = min(self._cov_min_tilt, self._camera.tilt)
+            self._cov_max_tilt = max(self._cov_max_tilt, self._camera.tilt)
+            coverage_dict = {
+                'min_pan': round(self._cov_min_pan, 2),
+                'max_pan': round(self._cov_max_pan, 2),
+                'min_tilt': round(self._cov_min_tilt, 2),
+                'max_tilt': round(self._cov_max_tilt, 2),
+            }
+
             telemetry = {
                 'type': 'telemetry',
                 'payload': {
@@ -1334,6 +1410,9 @@ class SimulationEngine:
                         'strength': round(self._atmos_strength, 3),
                     },
                     'metrics': frame_metrics,
+                    'optical': optical_dict,
+                    'coverage': coverage_dict,
+                    'reacquire_timeout_is_safety_only': True,
                     'events': self._drain_events(),
                 },
             }
@@ -1408,10 +1487,13 @@ class SimulationEngine:
                 # Check for REACQUIRING timeout
                 reacquire_duration = self._elapsed - self._reacquire_start_time
                 if reacquire_duration > self.REACQUIRE_TIMEOUT_SECONDS:
-                    # Timeout: return to SEARCHING; the sweep phase is left
-                    # running so coverage continues instead of restarting.
+                    # SAFETY timeout (catastrophic failure only): return to
+                    # SEARCHING and DROP the pending PS169 reacquisition
+                    # measurement so it is never reported as a successful
+                    # <= 1 s reacquisition. A fresh LOST starts a new window.
                     new = 'SEARCHING'
-                    self._emit_event('warning', f'REACQUIRE TIMEOUT — RETURNING TO SEARCHING ({self.REACQUIRE_TIMEOUT_SECONDS:.0f}s)')
+                    self._metrics._reacq_start = None
+                    self._emit_event('warning', f'REACQUIRE SAFETY TIMEOUT — RETURNING TO SEARCHING ({self.REACQUIRE_TIMEOUT_SECONDS:.0f}s, NOT a PS169 reacquisition)')
                 else:
                     # Active reacquisition: stay in REACQUIRING until detection
                     new = 'REACQUIRING'
@@ -1675,6 +1757,10 @@ class SimulationEngine:
         self._search_tilt0 = 0.0
         self._acq_started = False
         self._events = []
+        self._cov_min_pan = 0.0
+        self._cov_max_pan = 0.0
+        self._cov_min_tilt = 0.0
+        self._cov_max_tilt = 0.0
 
     def _finalize_run(self, status: str) -> None:
         if self._run_id:

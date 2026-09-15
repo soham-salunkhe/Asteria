@@ -48,15 +48,26 @@ app.add_middleware(
 class ConnectionManager:
     def __init__(self):
         self._active: Set[WebSocket] = set()
+        # A tracking route can subscribe after upload processing begins.
+        # Retain the latest packet, including its real video JPEG, so a late
+        # subscriber never remains on the black loading canvas.
+        self._latest_message: Optional[dict] = None
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
         self._active.add(ws)
+        if self._latest_message is not None:
+            try:
+                await ws.send_json(self._latest_message)
+            except Exception:
+                self._active.discard(ws)
 
     def disconnect(self, ws: WebSocket) -> None:
         self._active.discard(ws)
 
     async def broadcast(self, message: dict) -> None:
+        if message.get('type') == 'telemetry':
+            self._latest_message = message
         dead = set()
         for ws in self._active:
             try:
@@ -89,16 +100,17 @@ class DisturbanceUpdateRequest(BaseModel):
 
 
 class PIDUpdateRequest(BaseModel):
-    kp: float = Field(0.8, ge=0.0, le=10.0)
-    ki: float = Field(0.05, ge=0.0, le=5.0)
-    kd: float = Field(0.3, ge=0.0, le=5.0)
-    max_angular_velocity: float = Field(15.0, ge=0.1, le=90.0)
-    settling_threshold: float = Field(0.5, ge=0.01, le=5.0)
+    # PS169 authoritative runtime tuning (deg/sec output).
+    kp: float = Field(6.0, ge=0.0, le=10.0)
+    ki: float = Field(0.15, ge=0.0, le=5.0)
+    kd: float = Field(0.6, ge=0.0, le=5.0)
+    max_angular_velocity: float = Field(5.0, ge=0.1, le=90.0)
+    settling_threshold: float = Field(0.05, ge=0.01, le=5.0)
 
 
 class CameraAngleRequest(BaseModel):
     pan: float = Field(0.0, ge=-180.0, le=180.0)
-    tilt: float = Field(0.0, ge=-90.0, le=90.0)
+    tilt: float = Field(0.0, ge=-89.0, le=89.0)  # safe limit, avoids +/-90 singularity
 
 
 class KalmanUpdateRequest(BaseModel):
@@ -394,11 +406,38 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
     finally:
         file.file.close()
 
+    # Reserve a session before scheduling.  Every older processing loop sees
+    # this new id and exits without publishing stale telemetry.
+    session_id = video_processor.begin_session()
+    await manager.broadcast({'type': 'telemetry', 'payload': {
+        'timestamp': time.time(), 'frame_id': 0, 'elapsed': 0.0,
+        'sim_status': 'idle', 'target_state': 'READY', 'source': 'video_input',
+        'video_status': 'VIDEO_LOADING', 'session_id': session_id,
+        'frame_index': None, 'detector_frame': None, 'tracker_frame': None,
+        'video_frame_jpeg': None, 'detection': None, 'kalman': None,
+        'pixel_error': None, 'events': [],
+    }})
+
     # Schedule background processing
     orig_name = file.filename or 'uploaded_video.mp4'
     async def _run():
         try:
-            run_id = await video_processor.process(tmp_path, scenario_name=f'VIDEO-{orig_name}')
+            run_id = await video_processor.process(
+                tmp_path, scenario_name=f'VIDEO-{orig_name}', session_id=session_id)
+        except Exception as exc:
+            # An invalid/unreadable MP4 must be represented as an actual
+            # video error, never silently followed by synthetic tracking.
+            await manager.broadcast({'type': 'telemetry', 'payload': {
+                'timestamp': time.time(), 'frame_id': 0, 'elapsed': 0.0,
+                'sim_status': 'error', 'target_state': 'ERROR',
+                'source': 'video_input', 'video_status': 'VIDEO_ERROR',
+                'session_id': session_id, 'frame_index': None,
+                'detector_frame': None, 'tracker_frame': None,
+                'video_frame_jpeg': None, 'detection': None, 'kalman': None,
+                'pixel_error': None,
+                'events': [{'id': str(time.time()), 'timestamp': time.time(),
+                            'level': 'error', 'message': f'VIDEO ERROR — {exc}'}],
+            }})
         finally:
             try:
                 os.unlink(tmp_path)
@@ -411,6 +450,7 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
         'success': True,
         'message': 'Video processing started',
         'run_id': None,  # will be emitted via WS once processing begins
+        'session_id': session_id,
         'filename': file.filename,
     }
 

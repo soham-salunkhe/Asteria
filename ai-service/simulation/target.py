@@ -203,14 +203,60 @@ class Target:
             'timestamp': timestamp,
         }
 
+    def _pattern_offset(self, t: float) -> 'Vec3':
+        """Positional offset the trajectory pattern applies at phase time t.
+
+        Mirrors update() without mutating state, so relocate() can shift
+        the origin by exactly this amount and hold the placed position.
+        Stateful patterns (linear, random_walk, static) integrate from the
+        current position, so their offset is zero by definition.
+        """
+        cfg = self.config
+        period = cfg.period if cfg.period > 0 else 1e-3
+        omega = 2.0 * math.pi / period
+        if cfg.trajectory == 'sinusoidal':
+            return Vec3(
+                cfg.amplitude_h * math.sin(omega * t),
+                cfg.amplitude_v * math.sin(2 * omega * t + 0.5),
+                0.0,
+            )
+        elif cfg.trajectory == 'circular':
+            return Vec3(
+                cfg.amplitude_h * math.cos(omega * t),
+                cfg.amplitude_v * math.sin(omega * t),
+                0.0,
+            )
+        elif cfg.trajectory == 'figure_8':
+            return Vec3(
+                cfg.amplitude_h * math.sin(omega * t),
+                cfg.amplitude_v * math.sin(2 * omega * t + math.pi / 2),
+                0.0,
+            )
+        elif cfg.trajectory == 'spiral':
+            frac = (t % period) / period
+            radius = 0.15 + 0.85 * frac
+            ang = omega * t
+            return Vec3(
+                cfg.amplitude_h * radius * math.cos(ang),
+                cfg.amplitude_v * radius * math.sin(ang),
+                0.0,
+            )
+        return Vec3(0.0, 0.0, 0.0)
+
     def relocate(self, x: float, y: float, z: float) -> None:
-        """Operator manual move: re-anchor the trajectory origin and place
-        the target there immediately. Clock/phase/velocity are preserved so
-        motion continues seamlessly from the new anchor. Only this target
-        is affected; beacons follow automatically via beacon_offset."""
-        self._origin = Vec3(x, y, z)
+        """Operator manual move: place the target exactly at (x, y, z) and
+        shift the trajectory origin so the pattern continues seamlessly
+        from there. Clock/phase/velocity are preserved; the old code
+        re-anchored the origin AT the placed point, which made oscillatory
+        patterns (sinusoidal/circular/figure_8/spiral) jump off the drop
+        point on the very next frame. Only this target is affected;
+        beacons follow automatically via beacon_offset."""
+        off = self._pattern_offset(self._t)
+        self._origin = Vec3(x - off.x, y - off.y, z)
         self._position = Vec3(x, y, z)
-        self.config.initial_position = Vec3(x, y, z)
+        self.config.initial_position = Vec3(self._origin.x,
+                                            self._origin.y,
+                                            self._origin.z)
 
     def reset(self) -> None:
         self._position = Vec3(self.config.initial_position.x,

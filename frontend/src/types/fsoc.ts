@@ -309,6 +309,23 @@ export interface TelemetryFrame {
   /** 'virtual' | 'video_input' */
   source?: string;
   video_progress?: number;
+  /** VIDEO_LOADING | VIDEO_READY | VIDEO_PROCESSING | VIDEO_COMPLETE (video_input only) */
+  video_status?: string;
+  /** Source metadata, measured from the decoded MP4 stream. */
+  video_total_frames?: number;
+  video_fps?: number;
+  /** Current FSOC aim in fixed 640×480 MP4 coordinates. */
+  camera_center?: Vec2;
+  /** Run/session id — ties every sample to the current MP4 session */
+  session_id?: string | null;
+  /** WHY lock was exited this frame: NONE | NO_DETECTION | ERROR_TOO_HIGH | STATE_TIMEOUT */
+  lock_lost_reason?: string;
+  /** Identity proof: display/detector/tracker frame — must all match */
+  frame_index?: number;
+  detector_frame?: number;
+  tracker_frame?: number;
+  /** Actual processed video frame (JPEG base64, video_input only) — null in virtual mode */
+  video_frame_jpeg?: string | null;
   pid_output: PIDOutput;
 
   disturbance: DisturbanceState;
@@ -316,6 +333,23 @@ export interface TelemetryFrame {
   metrics: FrameMetrics;
 
   events: EventLogEntry[];
+
+  optical_center?: Vec2;
+  error_trend?: 'DECREASING' | 'STABLE' | 'DIVERGING';
+  candidates?: Array<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    cx: number;
+    cy: number;
+    area: number;
+    peak: number;
+    contrast?: number;
+    score: number;
+    confidence: number;
+    selected: boolean;
+  }>;
 }
 
 // ── Per-frame metrics ─────────────────────────────────────────
@@ -339,7 +373,16 @@ export interface FrameMetrics {
   target_loss_pct: number;
   avg_reacquisition_time: number | null;
   /** PS169 benchmark evaluation (all values measured live) */
-  ps169?: Record<string, PS169Item>;
+  ps169?: Record<string, PS169Item> & {
+    acquisition_s?: PS169Item;
+    avg_error_px?: PS169Item;
+    max_error_px?: PS169Item;
+    rmse_px?: PS169Item;
+    target_loss_pct?: PS169Item;
+    reacquisition_s?: PS169Item;
+    lock_retention?: PS169Item;
+    fps?: PS169Item;
+  };
 }
 
 // ── Event log ─────────────────────────────────────────────────

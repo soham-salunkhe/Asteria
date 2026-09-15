@@ -15,7 +15,8 @@ from typing import Optional, Tuple
 
 @dataclass
 class KalmanConfig:
-    process_noise_q: float = 0.5      # Q: how much the target can accelerate per frame
+    # Authoritative PS169 tuning — single source: tracking_constants.
+    process_noise_q: float = 2.0      # Q: how much the target can accelerate per frame
     measurement_noise_r: float = 5.0  # R: pixel measurement uncertainty
     initial_covariance: float = 500.0  # P0: initial state uncertainty
 
@@ -154,12 +155,12 @@ class KalmanFilter2D:
     def converged(self) -> bool:
         return self._converged
 
-    def state_dict(self) -> dict:
+    def state_dict(self, dt: float = 1.0 / 30.0) -> dict:
         px, py = self.position
         vx, vy = self.velocity
-        # Predicted next position
-        pred_x = px + vx * (1.0 / 30.0)
-        pred_y = py + vy * (1.0 / 30.0)
+        # Predicted next position using the caller's true frame interval.
+        pred_x = px + vx * dt
+        pred_y = py + vy * dt
         return {
             'position': {'x': round(px, 2), 'y': round(py, 2)},
             'velocity': {'x': round(vx, 3), 'y': round(vy, 3)},

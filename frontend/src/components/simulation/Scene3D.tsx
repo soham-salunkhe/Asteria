@@ -975,6 +975,27 @@ function VirtualFsocRig({
         </group>
       )}
 
+      {/* Optical LINK line: aperture → live beacon, full distance. The beam
+          (2.0) and frustum (4.0) have fixed lengths and stop short of
+          distant targets — this is the line the legend promises, and the
+          one that visibly connects the camera to the target. World-space
+          endpoints (host frame): honest even while slewing, overlaps the
+          beam exactly when locked. Shown only in LOCKED state — it is the
+          visual confirmation of lock, hidden while searching, acquiring,
+          tracking or lost. Skipped when behind the aperture. */}
+      {state === 'LOCKED' && inFront !== false && (
+        <Line
+          points={[[fsocAperture[0], fsocAperture[1], fsocAperture[2]], [beaconLocal[0], beaconLocal[1], beaconLocal[2]]]}
+          color="#8fe0b4"
+          lineWidth={1.2}
+          transparent
+          opacity={0.9}
+          dashed
+          dashSize={0.12}
+          gapSize={0.08}
+        />
+      )}
+
       {/* Spec §7: When beacon is behind the camera, render an unambiguous scene
           indicator so the operator can see the FSOC sensor cannot detect it. */}
       {inFront === false && (
@@ -1365,16 +1386,18 @@ function NavRig({
     // Compute destination TO (reads latest values via refs)
     const dest = new THREE.Vector3(0, 0, -0.55); // default lookAt
     let destCamPos: V3;
-    const fid = followIdRef.current;
     const fb = fallbackRef.current;
 
     if (viewReq.name === 'target') {
-      // FOCUS resolves the SELECTED entity (never the tracked one) through
-      // the authoritative resolver. Viewer camera only — FSOC pan/tilt,
+      // TARGET is a deterministic preset: it always frames the live
+      // TRACKED target (fb), never the current selection. Resolving the
+      // selection here sent the viewer to the camera whenever a
+      // camera/satellite was selected. FOLLOW remains the
+      // selection-following control. Viewer camera only — FSOC pan/tilt,
       // PID, Kalman and tracking state are untouched by this path.
-      const p = (fid && resolveRef.current(fid)) || fb;
+      const p = fb;
       console.debug('[ASTERIA FOCUS START]', {
-        entityId: fid, worldPos: p, fellBackToLive: !(fid && resolveRef.current(fid)),
+        entityId: 'tracked-target', worldPos: p,
       });
       dest.set(p[0], p[1] + 0.3, p[2]);
       destCamPos = [p[0] + 1.8, p[1] + 1.2, p[2] + 2.5];
@@ -1805,7 +1828,7 @@ export default function Scene3D({ frame, history }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [showShift, setShowShift] = useState(false);
   const [switching, setSwitching] = useState(false);
-  const [showFsocDebug, setShowFsocDebug] = useState(true);
+  const [showFsocDebug, setShowFsocDebug] = useState(false);
   const [showSync, setShowSync] = useState(false);
   const [panelTick, setPanelTick] = useState<V3 | null>(null);
   const [offset, setOffset] = useState<V3>([0, 0, 0]);
@@ -2202,6 +2225,7 @@ export default function Scene3D({ frame, history }: Props) {
       }}
     >
       <Canvas
+        // Operator VIEWER camera (43° perspective) — NOT the 4°x3° FSOC optical sensor.
         camera={{ position: [4.8, 2.8, 7.4], fov: 43, near: 0.01, far: 200 }}
         gl={{ antialias: true, alpha: false, logarithmicDepthBuffer: true }}
         dpr={[1, 1.5]}
@@ -2387,8 +2411,8 @@ export default function Scene3D({ frame, history }: Props) {
               <div style={{ color: '#8d9195', marginTop: 3, letterSpacing: '0.08em' }}>IMAGE</div>
               <FsocDbgRow label="Beacon X" value={sync.centroid ? sync.centroid.x.toFixed(2) : '—'} />
               <FsocDbgRow label="Beacon Y" value={sync.centroid ? sync.centroid.y.toFixed(2) : '—'} />
-              <FsocDbgRow label="Center X" value="320" />
-              <FsocDbgRow label="Center Y" value="240" />
+              <FsocDbgRow label="Center X" value={sync.imgCenter.x.toFixed(0)} />
+              <FsocDbgRow label="Center Y" value={sync.imgCenter.y.toFixed(0)} />
 
               {/* ── IMAGE-PLANE ERROR ── */}
               <div style={{ color: '#8d9195', marginTop: 3, letterSpacing: '0.08em' }}>ERROR</div>
@@ -2486,7 +2510,7 @@ export default function Scene3D({ frame, history }: Props) {
             <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('iso')} title="Full environment view">
               FULL
             </button>
-            <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('target')} title="One-time focus on selected target (visualization only)">
+            <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('target')} title="One-time focus on the tracked target (visualization only)">
               TARGET
             </button>
             <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('camera')} title="One-time focus on FSOC camera rig (visualization only)">
@@ -2738,8 +2762,8 @@ export default function Scene3D({ frame, history }: Props) {
                         <span style={{ width: 25, color: '#8d9195' }}>{axis}</span>
                         <input
                           type="range"
-                          min={-45}
-                          max={45}
+                          min={axis === 'PAN' ? -180 : -89}
+                          max={axis === 'PAN' ? 180 : 89}
                           step={0.1}
                           value={axis === 'PAN' ? pan : tilt}
                           disabled={trackingOwnsCamera}
@@ -2758,7 +2782,7 @@ export default function Scene3D({ frame, history }: Props) {
                         <button
                           style={{ ...chipBtn, flex: 1, fontSize: 8, padding: '2px 4px' }}
                           onClick={() => {
-                            const newPan = Math.min(45, pan + 5);
+                            const newPan = Math.min(180, pan + 5);
                             fsocApi.updateCamera(newPan, tilt).catch(console.error);
                           }}
                           title="Spec §14 Test 1: +PAN 5° — optical axis X should increase"
@@ -2768,7 +2792,7 @@ export default function Scene3D({ frame, history }: Props) {
                         <button
                           style={{ ...chipBtn, flex: 1, fontSize: 8, padding: '2px 4px' }}
                           onClick={() => {
-                            const newTilt = Math.min(45, tilt + 5);
+                            const newTilt = Math.min(89, tilt + 5);
                             fsocApi.updateCamera(pan, newTilt).catch(console.error);
                           }}
                           title="Spec §14 Test 2: +TILT 5° — optical axis Y should increase"

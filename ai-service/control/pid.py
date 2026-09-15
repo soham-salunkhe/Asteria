@@ -11,11 +11,19 @@ from dataclasses import dataclass
 
 @dataclass
 class PIDConfig:
-    kp: float = 0.8               # Proportional gain
-    ki: float = 0.05              # Integral gain
-    kd: float = 0.3               # Derivative gain
-    max_angular_velocity: float = 15.0  # deg/s maximum output
-    settling_threshold: float = 0.5    # degrees — within = settled
+    # Authoritative PS169 runtime tuning (deg/sec output, integrated with dt).
+    # Single source: tracking_constants PID_KP/KI/KD/... — keep in sync.
+    kp: float = 6.0               # Proportional gain
+    ki: float = 0.15              # Integral gain
+    kd: float = 0.6               # Derivative gain
+    max_angular_velocity: float = 5.0  # deg/s maximum output (PS169 default)
+    settling_threshold: float = 0.05    # degrees — within = settled
+    # Derivative low-pass alpha: d_filt = alpha*d_filt + (1-alpha)*d_raw.
+    # Pixel-quantized centroids make the raw derivative thrash sign every
+    # frame (measured aim limit-cycle ±4 px at 24 fps with kd=0.9); the
+    # filter keeps genuine damping while passing sustained moves in ~3
+    # frames.  Single source: tracking_constants PID_D_FILTER_ALPHA.
+    derivative_filter_alpha: float = 0.7
 
 
 class PIDAxis:
@@ -28,6 +36,8 @@ class PIDAxis:
         self._prev_time: float | None = None
         # Anti-windup clamp
         self._integral_limit: float = 20.0
+        # Filtered derivative state (deg/s)
+        self._d_filtered: float = 0.0
 
     def update(self, error: float, dt: float) -> float:
         """
@@ -48,9 +58,12 @@ class PIDAxis:
                              min(self._integral_limit, self._integral))
         i_term = cfg.ki * self._integral
 
-        # Derivative term
-        d_term = cfg.kd * (error - self._prev_error) / dt
+        # Derivative term — low-pass filtered (see config notes)
+        d_raw = cfg.kd * (error - self._prev_error) / dt
         self._prev_error = error
+        alpha = cfg.derivative_filter_alpha
+        self._d_filtered = alpha * self._d_filtered + (1.0 - alpha) * d_raw
+        d_term = self._d_filtered
 
         # Raw output (degrees per second)
         output_rate = p_term + i_term + d_term
@@ -66,6 +79,11 @@ class PIDAxis:
     def reset(self) -> None:
         self._integral = 0.0
         self._prev_error = 0.0
+        self._d_filtered = 0.0
+
+    def reset_integral(self) -> None:
+        """Zero the integrator, preserving derivative/prev-error state."""
+        self._integral = 0.0
 
     @property
     def integral(self) -> float:
@@ -135,3 +153,13 @@ class PIDController:
         self._pan_axis.reset()
         self._tilt_axis.reset()
         self._settled = False
+
+    def reset_integral(self) -> None:
+        """Zero the integrator only (episode hygiene — see video loop).
+
+        Transient bias wound during acquisition must not leak into the
+        locked episode as a standing drag.  Derivative state is preserved
+        so no D-spike follows.
+        """
+        self._pan_axis.reset_integral()
+        self._tilt_axis.reset_integral()

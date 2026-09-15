@@ -8,6 +8,7 @@ import { useSimulation } from '../../hooks/useSimulation';
 import { CameraFeed } from '../../components/simulation/CameraFeed';
 import { SimulationViewport } from '../../components/simulation/SimulationViewport';
 import { TargetStateIndicator } from '../../components/telemetry/TargetStateIndicator';
+import { PS169_CONFIG, validatePs169Config } from '../../config/ps169';
 import { EventLog } from '../../components/telemetry/EventLog';
 import type { TargetState } from '../../types/fsoc';
 
@@ -98,16 +99,17 @@ export function MissionControlPage() {
     multi_target: multiTarget,
     platform_motion: platformMotion,
     camera: {
+      // Single source of truth: PS169_CONFIG (640x480, 4°x3°, 30 FPS).
       fov_h: target.fov_h,
       fov_v: target.fov_v,
-      resolution_w: 640,
-      resolution_h: 480,
-      fps: 30,
+      resolution_w: PS169_CONFIG.camera.width,
+      resolution_h: PS169_CONFIG.camera.height,
+      fps: PS169_CONFIG.camera.fps,
     },
     pid: {
-      kp: 6.0, ki: 0.15, kd: 0.6,
+      kp: PS169_CONFIG.pid.kp, ki: PS169_CONFIG.pid.ki, kd: PS169_CONFIG.pid.kd,
       max_angular_velocity: target.max_rate,
-      settling_threshold: 0.05,
+      settling_threshold: PS169_CONFIG.pid.settlingDeg,
     },
     target: {
       id: target.id,
@@ -134,6 +136,22 @@ export function MissionControlPage() {
   const handleStartCustom = async () => {
     setStarting(true);
     try {
+      // PS169 startup validation — fail loudly, never silently correct.
+      const cfgErrors = validatePs169Config({
+        width: PS169_CONFIG.camera.width,
+        height: PS169_CONFIG.camera.height,
+        fovH: target.fov_h,
+        fovV: target.fov_v,
+      });
+      if (target.fov_h !== 4 || target.fov_v !== 3) {
+        cfgErrors.push(
+          `FSOC optical FOV must be 4°x3°, got ${target.fov_h}°x${target.fov_v}°`,
+        );
+      }
+      if (cfgErrors.length > 0) {
+        alert(`PARAMETER VALIDATION FAILED\n${cfgErrors.join('\n')}`);
+        return;
+      }
       await sim.startCustom(buildConfig());
     } finally {
       setStarting(false);
@@ -147,6 +165,12 @@ export function MissionControlPage() {
   const handleVideoUpload = async (file: File) => {
     setVideoFile(file);
     setVideoUploading(true);
+    // Move straight to the tracking console and retain an explicit loading
+    // state while the (potentially large) MP4 is still being uploaded.
+    // Do not reload the document here: that interrupts/defers the upload and
+    // leaves the user staring at a blank route.
+    sessionStorage.setItem('asteria-video-upload-pending', '1');
+    nav('/tracking');
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -155,12 +179,14 @@ export function MissionControlPage() {
         body: formData,
       });
       const data = await res.json();
-      // Navigate to tracking page as soon as upload is accepted (processing is async via WS)
       if (data.success) {
-        setTimeout(() => nav('/tracking'), 400);
+        // The WebSocket VIDEO_LOADING/VIDEO_READY packets now take over the
+        // visual state; the tracking page is already mounted and subscribed.
+        sessionStorage.removeItem('asteria-video-upload-pending');
       }
     } catch (e) {
       console.error('Video upload failed', e);
+      sessionStorage.removeItem('asteria-video-upload-pending');
     } finally {
       setVideoUploading(false);
     }
@@ -202,12 +228,13 @@ export function MissionControlPage() {
               >
                 ⚙ CONFIGURE
               </button>
-              {/* Benchmark 2 — Video input mode */}
+              {/* Benchmark 2 — Video input mode (no title attr: a hover
+                  tooltip can freeze on screen across the post-upload
+                  navigation to /tracking) */}
               <button
                 className="mc-btn-video"
                 onClick={() => videoInputRef.current?.click()}
                 disabled={videoUploading}
-                title="Upload MP4 for Benchmark 2 evaluation"
               >
                 {videoUploading ? '⏳ PROCESSING…' : '📹 UPLOAD VIDEO'}
               </button>
@@ -512,7 +539,7 @@ export function MissionControlPage() {
               ['SCENARIO',    environment.replace('_',' ').toUpperCase()],
               ['TARGET',      target.id],
               ['TRAJECTORY',  target.trajectory.toUpperCase()],
-              ['DETECTOR',    'MOCK / YOLO-READY'],
+              ['DETECTOR',    f?.detection?.detector?.toUpperCase() ?? '—'],
             ].map(([k, v]) => (
               <div key={k} className="mc-id-row">
                 <span className="mc-id-key">{k}</span>

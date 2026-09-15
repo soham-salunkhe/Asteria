@@ -24,9 +24,9 @@ export function SettingsPage() {
     resolution: '640x480',
     simDt: 0.033,
 
-    // Camera
-    fovH: 28.0,
-    fovV: 21.0,
+    // Camera (PS169 authoritative: 4° x 3° — must match the runtime engine)
+    fovH: 4.0,
+    fovV: 3.0,
     noiseLevel: 0.02,
 
     // Detection
@@ -34,17 +34,17 @@ export function SettingsPage() {
     modelPath: 'models/beacon_yolo.pt',
     confThreshold: 0.5,
 
-    // Kalman
-    processNoiseQ: 0.5,
+    // Kalman (PS169 authoritative runtime tuning)
+    processNoiseQ: 2.0,
     measurementNoiseR: 5.0,
     initialCovariance: 500.0,
 
-    // PID
-    kp: 0.8,
-    ki: 0.05,
-    kd: 0.3,
-    maxVelocity: 15.0,
-    settlingThreshold: 0.5,
+    // PID (PS169 authoritative runtime tuning, deg/sec output)
+    kp: 6.0,
+    ki: 0.15,
+    kd: 0.6,
+    maxVelocity: 5.0,
+    settlingThreshold: 0.05,
 
     // Gemini
     geminiModel: 'gemini-1.5-flash',
@@ -112,9 +112,9 @@ export function SettingsPage() {
           <SelectSetting label="Camera Resolution"      value={settings.resolution} options={['320x240','640x480','1280x720','1920x1080']} onChange={v => set('resolution', v)} />
         </SettingsGroup>
 
-        <SettingsGroup title="CAMERA">
-          <NumberSetting label="FOV Horizontal (°)"     value={settings.fovH}   onChange={v => set('fovH', v)} min={5} max={90} step={0.5} />
-          <NumberSetting label="FOV Vertical (°)"       value={settings.fovV}   onChange={v => set('fovV', v)} min={5} max={60} step={0.5} />
+        <SettingsGroup title="CAMERA (PS169: 4° x 3° — FSOC optical FOV, not viewer FOV)">
+          <NumberSetting label="FOV Horizontal (°)"     value={settings.fovH}   onChange={v => set('fovH', v)} min={2} max={12} step={0.5} />
+          <NumberSetting label="FOV Vertical (°)"       value={settings.fovV}   onChange={v => set('fovV', v)} min={2} max={9} step={0.5} />
           <NumberSetting label="Noise Level (0-1)"      value={settings.noiseLevel} onChange={v => set('noiseLevel', v)} min={0} max={1} step={0.005} />
         </SettingsGroup>
 
