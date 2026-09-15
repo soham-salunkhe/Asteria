@@ -1,0 +1,525 @@
+/* ============================================================
+   ASTERIA Mission Control — aerospace console layout
+   Flat technical cards · amber primary · cyan optical accents
+   ============================================================ */
+
+.mc2-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+/* ── Mission header ─────────────────────────────────────── */
+.mc2-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.mc2-mission-id {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mc2-mid-sep { color: var(--text-3); }
+
+.mc2-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.mc2-clock {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.mc2-simpill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+.mc2-simdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Compact header buttons ─────────────────────────────── */
+.mc2-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.mc2-btn:hover:not(:disabled) { border-color: var(--text-3); color: var(--text); }
+.mc2-btn:disabled { opacity: 0.45; cursor: default; }
+.mc2-btn--on { border-color: var(--cyan); color: var(--cyan); }
+
+.mc2-btn-start {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--cyan-glow);
+  font-weight: 700;
+}
+.mc2-btn-start:hover:not(:disabled) { background: rgba(217, 134, 24, 0.2); color: var(--cyan); }
+
+.mc2-btn-pause { border-color: var(--amber); color: var(--amber); }
+.mc2-btn-stop { border-color: var(--border-2); color: var(--text-2); }
+.mc2-btn-end { border-color: var(--red); color: var(--red); }
+.mc2-btn-end:hover:not(:disabled) { border-color: var(--red); color: var(--red); background: rgba(168, 106, 90, 0.12); }
+
+/* ── Body: center + rail ────────────────────────────────── */
+.mc2-body {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.mc2-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Twin panel ─────────────────────────────────────────── */
+.mc2-twin {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+}
+
+.mc2-twin-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 10px;
+}
+
+.mc2-twin-titles {
+  justify-self: start;
+  min-width: 0;
+}
+
+.mc2-twin-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text);
+}
+
+.mc2-twin-sub {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+
+.mc2-twin-head-right {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Run controls perfectly centered in the twin bar (live session only) */
+.mc2-twin-runcontrols {
+  justify-self: center;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 34px;
+}
+
+.mc2-seg {
+  display: flex;
+  border: 1px solid var(--amber);
+  background: var(--bg-2);
+}
+
+.mc2-seg-btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 8px 18px;
+  background: transparent;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.mc2-seg-btn--on {
+  background: var(--cyan-glow);
+  color: var(--cyan);
+  box-shadow: inset 0 0 0 1px var(--cyan);
+}
+
+.mc2-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-2);
+  padding: 5px 8px;
+  background: var(--bg-2);
+}
+
+.mc2-select-tag { font-size: 10px; letter-spacing: 0.06em; color: var(--text-3); }
+
+.mc2-select {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  outline: none;
+}
+
+.mc2-select:disabled { opacity: 0.5; cursor: default; }
+.mc2-select option { background: var(--bg-2); color: var(--text); }
+
+/* ── Visualization viewport ─────────────────────────────── */
+.mc2-viz {
+  position: relative;
+  flex: 1;
+  min-height: 480px;
+  background: #04070b;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.mc2-viz .camera-feed-canvas {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain;
+  display: block;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ── Fullscreen follow view: exactly the viewport, nothing extends ── */
+.mc2-viz:fullscreen,
+.mc2-viz:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  max-height: 100vh;
+  border: none;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  background: #04070b;
+}
+
+.mc2-viz:fullscreen .camera-feed-canvas,
+.mc2-viz:-webkit-full-screen .camera-feed-canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Keep every overlay option visible together in fullscreen */
+.mc2-viz:fullscreen .mc2-viz-status,
+.mc2-viz:-webkit-full-screen .mc2-viz-status,
+.mc2-viz:fullscreen .mc2-viz-controls,
+.mc2-viz:-webkit-full-screen .mc2-viz-controls,
+.mc2-viz:fullscreen .mc2-toggles,
+.mc2-viz:-webkit-full-screen .mc2-toggles {
+  z-index: 10;
+}
+
+/* In-viz tracking-state chip (3D twin only; 2D has the canvas badge) */
+.mc2-viz-status {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 7px 12px;
+  background: rgba(5, 9, 11, 0.92);
+  border: 1px solid var(--border-2);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.mc2-viz-status .mc2-status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* In-screen view controls (3D twin only) */
+.mc2-viz-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 50;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mc2-viz-controls .mc2-select-wrap,
+.mc2-viz-controls .mc2-btn {
+  background: rgba(13, 16, 19, 0.9);
+}
+
+.mc2-btn-view.mc2-btn--on { border-color: var(--cyan); color: var(--cyan); }
+
+.mc2-toggles {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 6px;
+  z-index: 50;
+}
+
+.mc2-tgl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 5px 10px;
+  background: rgba(13, 16, 19, 0.9);
+  border: 1px solid var(--border-2);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.mc2-tgl:disabled { opacity: 0.5; cursor: default; }
+
+.mc2-tgl-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+
+.mc2-tgl--on { color: #7fc4d4; border-color: #33505a; }
+.mc2-tgl--on .mc2-tgl-dot { background: #4fb3d1; }
+
+/* ── Entity bar ─────────────────────────────────────────── */
+.mc2-entities {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  flex-wrap: wrap;
+}
+
+.mc2-entities-label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--text-3);
+}
+
+.mc2-entities-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.mc2-ent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+
+.mc2-ent:disabled { cursor: default; }
+.mc2-ent:not(:disabled) { cursor: pointer; }
+.mc2-ent:not(:disabled):hover { border-color: var(--text-3); color: var(--text); }
+
+.mc2-ent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mc2-ent--sel {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--cyan-glow);
+}
+
+.mc2-entities-add {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.mc2-ent-add {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px dashed var(--border-2);
+  color: var(--text-3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mc2-ent-add:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); border-style: solid; }
+.mc2-ent-add:disabled { opacity: 0.45; cursor: default; }
+
+/* ── Right rail ─────────────────────────────────────────── */
+.mc2-rail {
+  width: 300px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.mc2-card {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  padding: 12px 14px;
+}
+
+.mc2-card-head {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.mc2-rows { display: flex; flex-direction: column; }
+
+.mc2-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.mc2-row:first-child { border-top: none; }
+
+.mc2-key { color: var(--text-2); letter-spacing: 0.04em; white-space: nowrap; }
+
+.mc2-val {
+  color: var(--text);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.mc2-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.mc2-card--log { display: flex; flex-direction: column; min-height: 0; }
+
+.mc2-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mc2-clear {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  background: transparent;
+  border: none;
+  color: #7fc4d4;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.mc2-clear:disabled { opacity: 0.4; cursor: default; }
+.mc2-clear:hover:not(:disabled) { text-decoration: underline; }
+
+/* ── Responsive (desktop-first) ─────────────────────────── */
+@media (max-width: 1280px) {
+  .mc2-rail { width: 264px; }
+}
+
+@media (max-width: 1150px) {
+  .mc2-twin-head { grid-template-columns: 1fr; justify-items: center; }
+  .mc2-twin-titles { justify-self: center; text-align: center; }
+  .mc2-twin-head-right { justify-self: center; justify-content: center; }
+}
+
+@media (max-width: 1080px) {
+  .mc2-body { flex-direction: column; }
+  .mc2-rail {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    align-items: start;
+  }
+  .mc2-viz { min-height: 420px; }
+}

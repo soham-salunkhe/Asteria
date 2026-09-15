@@ -150,6 +150,10 @@ class MoveTargetRequest(BaseModel):
     position: Optional[dict] = None
 
 
+class DeleteTargetRequest(BaseModel):
+    target_id: str
+
+
 class TargetTrajectoryRequest(BaseModel):
     target_id: str
     trajectory: str = 'static'
@@ -167,6 +171,10 @@ class RegisterCameraRequest(BaseModel):
 class RegisterSatelliteRequest(BaseModel):
     satellite_id: str
     camera_id: str
+
+
+class DeleteSatelliteRequest(BaseModel):
+    satellite_id: str
 
 
 class ScenarioCreateRequest(BaseModel):
@@ -298,6 +306,19 @@ def move_target(req: MoveTargetRequest):
     return result
 
 
+@app.post('/api/simulation/delete_target')
+def delete_target(req: DeleteTargetRequest):
+    """Remove an operator-added target (and its link/beacon entry).
+
+    Refused while it is the active tracking target or drives the live
+    loop — the error explains what to do first.
+    """
+    result = engine.delete_target(req.target_id)
+    if not result.get('success'):
+        raise HTTPException(400, result.get('error', 'Unknown target'))
+    return result
+
+
 @app.post('/api/simulation/target_trajectory')
 def set_target_trajectory(req: TargetTrajectoryRequest):
     """Change a registered target's trajectory live (no restart)."""
@@ -329,6 +350,19 @@ def register_camera(req: RegisterCameraRequest):
 def register_satellite(req: RegisterSatelliteRequest):
     """Register a satellite with its associated FSOC camera."""
     result = engine.register_satellite(req.satellite_id, req.camera_id)
+    return result
+
+
+@app.post('/api/simulation/delete_satellite')
+def delete_satellite(req: DeleteSatelliteRequest):
+    """Remove an operator-added satellite terminal (and its camera).
+
+    Refused while the terminal owns the live tracking session or still
+    hosts linked targets — the error explains what to move first.
+    """
+    result = engine.delete_satellite(req.satellite_id)
+    if not result.get('success'):
+        raise HTTPException(400, result.get('error', 'Unknown satellite'))
     return result
 
 

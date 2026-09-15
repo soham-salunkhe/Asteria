@@ -1315,7 +1315,35 @@ function LocalObject({
 // FREE: OrbitControls owns the visualization camera.
 // FOCUSING: a one-time focus animation owns it; on completion → FREE.
 // FOLLOWING ('follow'): continuous follow owns it; toggle off → FREE.
-type CameraMode = 'free' | 'focusing' | 'follow';
+export type CameraMode = 'free' | 'focusing' | 'follow';
+
+export type TwinViewName = 'iso' | 'top' | 'front' | 'side' | 'reset' | 'target' | 'camera';
+
+export interface TwinToggles {
+  orbits: boolean;
+  fov: boolean;
+  labels: boolean;
+}
+
+/**
+ * External control surface for embedding the twin in a mission-control
+ * chrome (Mission Control page). Lets the parent render its own compact
+ * view/camera dropdowns, Orbits/FOV/Labels toggles and entity bar while
+ * the twin keeps owning the authoritative scene state. Other pages omit
+ * `minimalChrome`/`onTwinApi` and keep the built-in toolbar untouched.
+ */
+export interface TwinApi {
+  entityIds: string[];
+  selectedId: string | null;
+  select: (id: string | null) => void;
+  requestView: (name: TwinViewName) => void;
+  cameraMode: CameraMode;
+  setCameraMode: (m: CameraMode) => void;
+  toggles: TwinToggles;
+  setToggle: (k: keyof TwinToggles, v: boolean) => void;
+  /** Spawn an operator-owned target platform or satellite terminal. */
+  addEntity: (kind: 'target' | 'satellite') => void;
+}
 
 interface ViewRequest {
   name: 'iso' | 'top' | 'front' | 'side' | 'reset' | 'target' | 'camera';
@@ -1795,9 +1823,18 @@ function ResponsiveResizer({ containerWidth, containerHeight }: { containerWidth
 interface Props {
   frame: TelemetryFrame | null;
   history: TelemetryFrame[];
+  /**
+   * Hide the built-in overlay chrome (identity chip, scene settings, view
+   * presets, object buttons, inspector, legend) so the embedding page can
+   * render its own compact controls driven via `onTwinApi`. The 3-D scene,
+   * labels, FOV cone and selection all keep working.
+   */
+  minimalChrome?: boolean;
+  /** Receives the external control surface (called only when it changes). */
+  onTwinApi?: (api: TwinApi) => void;
 }
 
-export default function Scene3D({ frame, history }: Props) {
+export default function Scene3D({ frame, history, minimalChrome = false, onTwinApi }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
 
@@ -1839,11 +1876,13 @@ export default function Scene3D({ frame, history }: Props) {
 
   // END DEMO is distinct from STOP TRACKING: discard only client-side
   // runtime scene objects when the backend broadcasts its clean scenario.
+  // The move gizmo is re-armed (not disarmed): with nothing selected no
+  // arrows render, and the next selection is immediately draggable again.
   useEffect(() => {
     if (!frame?.scenario_reset) return;
     setObjects([]);
     setSelectedId(null);
-    setGizmoMode(null);
+    setGizmoMode('translate');
     setEntityGraph([]);
     positionsRef.current.clear();
     velocitiesRef.current.clear();
@@ -2064,13 +2103,73 @@ export default function Scene3D({ frame, history }: Props) {
     setObjects((p) => p.map((o) => (o.id === id ? { ...o, ...patch } : o)));
 
   const deleteSelected = () => {
-    if (!selectedId || selectedId === 'SAT-01' || selectedId === 'FSOC-CAM-01' || selectedId === liveTargetId || selectedId === liveBeaconId) return;
+    if (!selectedId) return;
+    // Backend-registered targets go through the registry so no stale
+    // backend entry survives a visual delete (refusals explain why).
+    const backendTid = resolveBackendTargetId();
+    if (backendTid) { void deleteTargetFlow(backendTid); return; }
+    if (selectedId === 'SAT-01' || selectedId === 'FSOC-CAM-01' || selectedId === liveTargetId || selectedId === liveBeaconId) return;
     const owner = objects.find((o) => o.id === selectedId || o.beaconId === selectedId);
     if (!owner) return;
     setObjects((p) => p.filter((o) => o.id !== owner.id));
     positionsRef.current.delete(selectedId);
     velocitiesRef.current.delete(selectedId);
     setSelectedId(null);
+  };
+
+  // Resolve the selection to a backend-registered target id (directly,
+  // via its beacon, or via a local object that was registered on spawn).
+  const resolveBackendTargetId = (): string | null => {
+    if (selectedBackendTargetId) return selectedBackendTargetId;
+    if (selectedId && entityGraph.some((e) => e.id === selectedId && e.type === 'target')) return selectedId;
+    const owner = objects.find((o) => o.id === selectedId || o.beaconId === selectedId);
+    if (owner && entityGraph.some((e) => e.id === owner.id && e.type === 'target')) return owner.id;
+    return null;
+  };
+
+  // Delete a target (and its beacon/link entry). Backend refuses the
+  // active tracking target and the live loop driver — reason surfaced.
+  const deleteTargetFlow = async (targetId: string) => {
+    if (!window.confirm(`Delete ${targetId} and its beacon?`)) return;
+    try {
+      await fsocApi.deleteTarget(targetId);
+      const beaconId = entityGraph.find((e) => e.id === targetId)?.beaconId
+        ?? objects.find((o) => o.id === targetId)?.beaconId;
+      setObjects((prev) => prev.filter((o) => o.id !== targetId));
+      positionsRef.current.delete(targetId);
+      velocitiesRef.current.delete(targetId);
+      if (beaconId) {
+        positionsRef.current.delete(beaconId);
+        velocitiesRef.current.delete(beaconId);
+      }
+      setSelectedId(null);
+      await refreshEntityGraph();
+    } catch (e) {
+      alert(`DELETE FAILED\n${e instanceof Error ? e.message : e}`);
+    }
+  };
+
+  // Delete a satellite terminal (operator-added SAT-02… or any backend
+  // satellite). Backend refuses terminals that own the live session or
+  // still host targets — the reason is surfaced, not silently ignored.
+  const deleteSatelliteFlow = async (satId: string) => {
+    if (!window.confirm(`Delete ${satId} and its FSOC camera?`)) return;
+    try {
+      await fsocApi.deleteSatellite(satId);
+      const camId = entityGraph.find((e) => e.id === satId)?.cameraId
+        ?? objects.find((o) => o.id === satId)?.cameraId;
+      setObjects((p) => p.filter((o) => o.id !== satId));
+      positionsRef.current.delete(satId);
+      velocitiesRef.current.delete(satId);
+      if (camId) {
+        positionsRef.current.delete(camId);
+        velocitiesRef.current.delete(camId);
+      }
+      setSelectedId(null);
+      await refreshEntityGraph();
+    } catch (e) {
+      alert(`DELETE FAILED\n${e instanceof Error ? e.message : e}`);
+    }
   };
 
   const selectedLocal = objects.find((o) => o.id === selectedId) ?? null;
@@ -2208,6 +2307,34 @@ export default function Scene3D({ frame, history }: Props) {
   const fallbackEntityIds = ['SAT-01', 'FSOC-CAM-01', liveTargetId, liveBeaconId, ...objects.flatMap((o) => o.kind === 'target' ? [o.id, o.beaconId] : [o.id, o.cameraId])];
   const entityListIds = Array.from(new Set(entityGraph.length ? entityGraph.map((entity) => entity.id) : fallbackEntityIds));
 
+  // Publish the external control surface for minimal-chrome embeds.
+  // Change-detected so the parent only re-renders when selection, camera
+  // mode, toggles or the entity list actually change (not per frame).
+  const lastTwinJson = useRef<string>('');
+  useEffect(() => {
+    if (!minimalChrome || !onTwinApi) return;
+    const snap = {
+      ids: entityListIds,
+      sel: selectedId,
+      cam: cameraMode,
+      t: [settings.trajectory, settings.fov, settings.labels],
+    };
+    const j = JSON.stringify(snap);
+    if (j === lastTwinJson.current) return;
+    lastTwinJson.current = j;
+    onTwinApi({
+      entityIds: entityListIds,
+      selectedId,
+      select: handleSelect,
+      requestView,
+      cameraMode,
+      setCameraMode,
+      toggles: { orbits: settings.trajectory, fov: settings.fov, labels: settings.labels },
+      setToggle: (k, v) => setS(k === 'orbits' ? 'trajectory' : k, v),
+      addEntity: (kind) => void addObject(kind),
+    });
+  });
+
   return (
     <div
       ref={containerRef}
@@ -2264,7 +2391,7 @@ export default function Scene3D({ frame, history }: Props) {
       {/* ── overlay root (non-interactive except controls) ── */}
       <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', fontFamily: 'monospace' }}>
         {/* top-left: minimal identity (telemetry lives in the side panel) */}
-        <div style={{ position: 'absolute', top: 48, left: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ position: 'absolute', top: 48, left: 12, display: minimalChrome ? 'none' : 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ ...panel, padding: '3px 8px', fontSize: 9 }}>
             <span style={{ color: '#f0b35a' }}>■ ASTERIA · 3D DIGITAL TWIN</span>
             <span style={{ color: '#626a6d' }}> · {tstate}</span>
@@ -2475,7 +2602,7 @@ export default function Scene3D({ frame, history }: Props) {
         </div>
 
         {/* top-right: scene settings */}
-        <div style={{ position: 'absolute', top: 48, right: 12, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+        <div style={{ position: 'absolute', top: 48, right: 12, display: minimalChrome ? 'none' : 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
           <button style={{ ...chipBtn, pointerEvents: 'auto', ...(showSettings ? chipOn : {}) }} onClick={() => setShowSettings((s) => !s)}>
             ⚙ SCENE
           </button>
@@ -2504,7 +2631,7 @@ export default function Scene3D({ frame, history }: Props) {
         </div>
 
         {/* left: compact view controls (one-time focus presets + follow) */}
-        <div style={{ position: 'absolute', left: 12, top: 100, display: 'flex', flexDirection: 'column', gap: 3 }} title="Drag to orbit · right-drag to pan · wheel to zoom">
+        <div style={{ position: 'absolute', left: 12, top: 100, display: minimalChrome ? 'none' : 'flex', flexDirection: 'column', gap: 3 }} title="Drag to orbit · right-drag to pan · wheel to zoom">
           <div style={{ ...panel, padding: '2px 6px', color: '#8d9195', fontSize: 9 }}>VIEW</div>
           <div style={{ display: 'flex', gap: 3 }}>
             <button style={{ ...chipBtn, pointerEvents: 'auto', fontSize: 9, padding: '3px 6px' }} onClick={() => requestView('iso')} title="Full environment view">
@@ -2542,7 +2669,7 @@ export default function Scene3D({ frame, history }: Props) {
         </div>
 
         {/* bottom-left: objects + gizmo */}
-        <div style={{ position: 'absolute', left: 8, bottom: 8, display: 'flex', flexDirection: 'column', gap: 4, maxWidth: '46%' }}>
+        <div style={{ position: 'absolute', left: 8, bottom: 8, display: minimalChrome ? 'none' : 'flex', flexDirection: 'column', gap: 4, maxWidth: '46%' }}>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             <button style={{ ...chipBtn, pointerEvents: 'auto' }} onClick={() => addObject('target')} title="Add new remote target platform">
               + ADD TARGET
@@ -2917,26 +3044,11 @@ export default function Scene3D({ frame, history }: Props) {
                 </button>
               )}
 
-              {isLiveTarget && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  {/* REACQUIRE — works from any state including TARGET LOST */}
-                  <button
-                    style={{
-                      ...chipBtn,
-                      pointerEvents: 'auto',
-                      backgroundColor: tstate === 'LOST' || tstate === 'REACQUIRING' ? '#2a1e10' : '#162832',
-                      borderColor: tstate === 'LOST' || tstate === 'REACQUIRING' ? '#e39a32' : '#385764',
-                      color: tstate === 'LOST' || tstate === 'REACQUIRING' ? '#f0c070' : '#8fa9a1',
-                      fontWeight: tstate === 'LOST' ? 600 : 400,
-                      fontSize: 10,
-                      textAlign: 'center',
-                      padding: '5px 8px',
-                    }}
-                    onClick={() => fsocApi.reacquire().catch(console.error)}
-                  >
-                    ⟳ REACQUIRE
-                  </button>
-                  {/* STOP TRACKING */}
+              {/* Delete a backend-registered target (and its beacon). Backend
+                  refuses the active tracking target / live loop driver. */}
+              {resolveBackendTargetId() && (() => {
+                const tid = resolveBackendTargetId() as string;
+                return (
                   <button
                     style={{
                       ...chipBtn,
@@ -2947,52 +3059,33 @@ export default function Scene3D({ frame, history }: Props) {
                       fontSize: 10,
                       textAlign: 'center',
                       padding: '5px 8px',
+                      marginTop: 4,
+                      width: '100%',
                     }}
-                    onClick={() => fsocApi.stopSimulation().catch(console.error)}
+                    onClick={() => void deleteTargetFlow(tid)}
+                    title={`Delete ${tid} and its beacon`}
                   >
-                    ■ STOP TRACKING
+                    ✕ DELETE TARGET
                   </button>
+                );
+              })()}
+              {isLiveTarget && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {/* STOP TRACKING */}
                   <button
                     style={{
                       ...chipBtn,
                       pointerEvents: 'auto',
                       backgroundColor: '#25180f',
                       borderColor: '#9b6b36',
-                      color: '#e8c08b',
+                      color: '#f0b35a',
                       fontSize: 10,
                       textAlign: 'center',
                       padding: '5px 8px',
                     }}
-                    onClick={async () => {
-                      try {
-                        await fsocApi.endDemo();
-                        setObjects([]);
-                        setSelectedId(null);
-                        localTargetCounter = 1;
-                        localSatCounter = 1;
-                      } catch (error) {
-                        console.error('Failed to end demo', error);
-                      }
-                    }}
-                    title="End the demo and clear runtime-created entities"
+                    onClick={() => fsocApi.stopSimulation().catch(console.error)}
                   >
-                    ◼ END DEMO
-                  </button>
-                  {/* RESET TRACKING */}
-                  <button
-                    style={{
-                      ...chipBtn,
-                      pointerEvents: 'auto',
-                      backgroundColor: '#121820',
-                      borderColor: '#4a6070',
-                      color: '#7a9ab0',
-                      fontSize: 10,
-                      textAlign: 'center',
-                      padding: '5px 8px',
-                    }}
-                    onClick={() => fsocApi.resetSimulation().catch(console.error)}
-                  >
-                    ↺ RESET TRACKING
+                    ■ STOP TRACKING
                   </button>
                 </div>
               )}
@@ -3087,12 +3180,40 @@ export default function Scene3D({ frame, history }: Props) {
                   </button>
                 </div>
               )}
+              {/* Delete a satellite terminal (operator-added or backend one).
+                  Backend refuses terminals owning live tracking or hosting
+                  targets — the reason is shown, never silently ignored. */}
+              {(isLiveSat || selectedLocal?.kind === 'satellite') && (() => {
+                const satId = selectedLocal?.kind === 'satellite'
+                  ? selectedLocal.id
+                  : activeSatelliteId;
+                return (
+                  <button
+                    style={{
+                      ...chipBtn,
+                      pointerEvents: 'auto',
+                      backgroundColor: '#1e1212',
+                      borderColor: '#7a4040',
+                      color: '#c98a8a',
+                      fontSize: 10,
+                      textAlign: 'center',
+                      padding: '5px 8px',
+                      marginTop: 4,
+                      width: '100%',
+                    }}
+                    onClick={() => void deleteSatelliteFlow(satId)}
+                    title={`Delete ${satId} and its FSOC camera`}
+                  >
+                    ✕ DELETE SATELLITE
+                  </button>
+                );
+              })()}
             </div>
           </div>
         )}
 
         {/* bottom-right: subtle legend only (interaction hint lives in VIEW tooltip) */}
-        <div style={{ position: 'absolute', right: 8, bottom: 8, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+        <div style={{ position: 'absolute', right: 8, bottom: 8, display: minimalChrome ? 'none' : 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
           <div style={{ ...panel, padding: '3px 8px', display: 'flex', gap: 8, fontSize: 9, opacity: 0.85 }}>
             <span><span style={{ color: '#dff2ff' }}>●</span> BEACON</span>
             <span><span style={{ color: '#7fc4d4' }}>◆</span> FOV</span>
@@ -3129,6 +3250,6 @@ function FsocDbgRow({
   );
 }
 
-export function SimulationViewport({ frame, history }: Props) {
-  return <Scene3D frame={frame} history={history} />;
+export function SimulationViewport({ frame, history, minimalChrome, onTwinApi }: Props) {
+  return <Scene3D frame={frame} history={history} minimalChrome={minimalChrome} onTwinApi={onTwinApi} />;
 }

@@ -5,6 +5,7 @@
  */
 import React, { Suspense, lazy } from 'react';
 import type { TelemetryFrame } from '../../types/fsoc';
+import type { TwinApi } from './Scene3D';
 
 const Scene3D = lazy(() =>
   import('./Scene3D').catch(() => ({
@@ -20,9 +21,11 @@ const Scene3D = lazy(() =>
 interface Props {
   frame: TelemetryFrame | null;
   history: TelemetryFrame[];
+  minimalChrome?: boolean;
+  onTwinApi?: (api: TwinApi) => void;
 }
 
-export function SimulationViewport({ frame, history }: Props) {
+export function SimulationViewport({ frame, history, minimalChrome, onTwinApi }: Props) {
   return (
     <div
       style={{
@@ -42,7 +45,7 @@ export function SimulationViewport({ frame, history }: Props) {
           <div className="sim3d-fallback">Loading 3-D engine…</div>
         }
       >
-        <Scene3D frame={frame} history={history} />
+        <Scene3D frame={frame} history={history} minimalChrome={minimalChrome} onTwinApi={onTwinApi} />
       </Suspense>
     </div>
   );

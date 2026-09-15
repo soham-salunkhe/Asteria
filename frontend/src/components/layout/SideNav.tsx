@@ -16,9 +16,9 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/detection', index: '03', label: 'DETECTION', icon: <IconDetection /> },
   { path: '/tracking', index: '04', label: 'TRACKING', icon: <IconTracking /> },
   { path: '/analytics', index: '05', label: 'ANALYTICS', icon: <IconAnalytics /> },
-  { path: '/disturbances', label: 'DISTURBANCE LAB', icon: <IconDisturbance /> },
-  { path: '/reports', label: 'REPORTS', icon: <IconReports /> },
-  { path: '/settings', label: 'SETTINGS', icon: <IconSettings /> },
+  { path: '/disturbances', index: '06', label: 'DISTURBANCE LAB', icon: <IconDisturbance /> },
+  { path: '/reports', index: '07', label: 'REPORTS', icon: <IconReports /> },
+  { path: '/settings', index: '08', label: 'SETTINGS', icon: <IconSettings /> },
 ];
 
 interface Props {
@@ -43,7 +43,7 @@ export function SideNav({ wsStatus, simStatus }: Props) {
         <LogoMark />
         <div className="sidenav-logo-text">
           <span className="sidenav-product">ASTERIA</span>
-          <span className="sidenav-sub">AI-BASED VIRTUAL CAMERA TRACKING</span>
+          <span className="sidenav-sub">FSOC MISSION CONTROL</span>
         </div>
       </div>
 

@@ -13,7 +13,18 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
+  if (!res.ok) {
+    // Surface FastAPI error bodies ({"detail": ...}) instead of bare codes.
+    let detail = '';
+    try {
+      const data = (await res.json()) as { detail?: unknown; error?: unknown };
+      if (typeof data.detail === 'string') detail = data.detail;
+      else if (typeof data.error === 'string') detail = data.error;
+    } catch {
+      // non-JSON error body — fall through to the status code
+    }
+    throw new Error(detail ? `${path} → ${detail}` : `${path} → HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -81,6 +92,11 @@ export const fsocApi = {
   moveTarget: (targetId: string, position: { x: number; y: number; z: number }) =>
     post<{ success: boolean; target_id: string }>('/api/simulation/move_target', { target_id: targetId, position }),
 
+  // Remove an operator-added target (refused while actively tracked or
+  // driving the live loop — see the error message).
+  deleteTarget: (targetId: string) =>
+    post<{ success: boolean; target_id: string }>('/api/simulation/delete_target', { target_id: targetId }),
+
   // Live trajectory change for a registered target (no restart).
   setTargetTrajectory: (targetId: string, trajectory: string) =>
     post<{ success: boolean; target_id: string; trajectory: string }>('/api/simulation/target_trajectory', { target_id: targetId, trajectory }),
@@ -94,6 +110,11 @@ export const fsocApi = {
 
   registerSatellite: (satelliteId: string, cameraId: string) =>
     post<{ success: boolean; satellite_id: string; camera_id: string }>('/api/simulation/register_satellite', { satellite_id: satelliteId, camera_id: cameraId }),
+
+  // Remove an operator-added satellite terminal (refused while it owns
+  // the live session or still hosts targets — see the error message).
+  deleteSatellite: (satelliteId: string) =>
+    post<{ success: boolean; satellite_id: string }>('/api/simulation/delete_satellite', { satellite_id: satelliteId }),
 
   getEntityRegistry: () =>
     get<{ targets: string[]; cameras: string[]; satellites: string[]; entities: SimulationEntity[]; active_target: string | null; active_camera: string | null; active_tracking_session: TrackingSession | null }>('/api/simulation/entity_registry'),

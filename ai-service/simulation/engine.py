@@ -343,6 +343,37 @@ class SimulationEngine:
         
         return {'success': True, 'satellite_id': satellite_id, 'camera_id': camera_id}
 
+    def delete_satellite(self, satellite_id: str) -> dict:
+        """Remove an operator-added satellite terminal (and its camera).
+
+        Safety guards: the terminal owning the live tracking session and
+        any terminal still hosting linked targets are refused — deleting
+        those would silently break the tracking loop. Its camera is
+        removed too, unless another satellite still uses it.
+        """
+        if satellite_id not in self._satellites:
+            return {'success': False, 'error': f'Unknown satellite {satellite_id}'}
+        sess = self._active_tracking_session or {}
+        if sess.get('satelliteId') == satellite_id:
+            return {'success': False,
+                    'error': f'{satellite_id} owns the active tracking session — stop tracking it first'}
+        hosted = sorted(tid for tid, link in self._target_links.items()
+                        if link.get('satellite_id') == satellite_id)
+        if hosted:
+            return {'success': False,
+                    'error': f'{satellite_id} hosts {", ".join(hosted)} — move them first'}
+
+        sat = self._satellites.pop(satellite_id)
+        camera_id = sat.get('camera_id')
+        if (camera_id and camera_id in self._cameras
+                and not any(s.get('camera_id') == camera_id
+                            for s in self._satellites.values())):
+            del self._cameras[camera_id]
+        self._emit_event('warning', f'SATELLITE REMOVED — {satellite_id}')
+
+        return {'success': True, 'satellite_id': satellite_id,
+                'camera_id': camera_id}
+
     def _entity_ids(self) -> set[str]:
         """All IDs share one namespace; type collisions are invalid as duplicates."""
         return (
@@ -920,6 +951,35 @@ class SimulationEngine:
         self._emit_event('info', f'TARGET MOVED — {target_id} → ({x:.1f}, {y:.1f}, {z:.1f})')
         return {'success': True, 'target_id': target_id,
                 'position': {'x': x, 'y': y, 'z': z}}
+
+    def delete_target(self, target_id: str) -> dict:
+        """Remove an operator-added target (and its link/beacon entry).
+
+        Safety guards: the active tracking target and — while the loop is
+        live — the target driving it are refused. Otherwise the link entry
+        is dropped, the dict entry removed, and the loop pointer moved to
+        a remaining target (or cleared when idle with none left).
+        """
+        if target_id not in self._targets:
+            return {'success': False, 'error': f'Unknown target {target_id}'}
+        sess = self._active_tracking_session or {}
+        if sess.get('targetId') == target_id:
+            return {'success': False,
+                    'error': f'{target_id} is the active tracking target — switch tracking first'}
+        if (self._running and self._target is not None
+                and self._target.config.id == target_id):
+            return {'success': False,
+                    'error': f'{target_id} drives the live loop — stop the run first'}
+
+        link = self._target_links.pop(target_id, {})
+        self._targets.pop(target_id, None)
+        if self._target is not None and self._target.config.id == target_id:
+            self._target = next(iter(self._targets.values()), None)
+            self._target_offset = Vec3(0.0, 0.0, 0.0)
+        self._emit_event('warning', f'TARGET REMOVED — {target_id}')
+
+        return {'success': True, 'target_id': target_id,
+                'beacon_id': link.get('beacon_id')}
 
     def set_target_trajectory(self, target_id: str, trajectory: str,
                                 amplitude_h: Optional[float] = None,

@@ -5,7 +5,7 @@
  *   2. Detected Beacon marker
  *   3. Movable FSOC Camera FOV rectangle
  *   4. Single thin Error Vector
- *   5. Single Status Badge
+ *   5. Single Status Badge (in-canvas — the one indicator for 2D view)
  *   6. Optional Debug Mode candidate boxes
  */
 import React, { useRef, useEffect, useState } from 'react';
@@ -183,9 +183,16 @@ export function CameraFeed({
       ctx.strokeStyle = bColor;
       ctx.lineWidth = 1.4;
 
-      // Small diamond/square around the beacon
-      const sz = 12;
-      ctx.strokeRect(bx - sz / 2, by - sz / 2, sz, sz);
+      // Beacon marker — honors shape/size settings so it stays distinct
+      // from the (always rectangular) FSOC FOV box.
+      const sz = beaconSize;
+      if (beaconShape === 'circle') {
+        ctx.beginPath();
+        ctx.arc(bx, by, sz / 2, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(bx - sz / 2, by - sz / 2, sz, sz);
+      }
 
       // Centroid center dot
       ctx.beginPath();
@@ -272,7 +279,7 @@ export function CameraFeed({
     ctx.lineWidth = 1;
     ctx.strokeRect(1, 1, W - 2, H - 2);
 
-  }, [frame, renderedVideo, debugMode, videoUploadPending]);
+  }, [frame, renderedVideo, debugMode, videoUploadPending, beaconShape, beaconSize]);
 
   return (
     <canvas

@@ -1,16 +1,19 @@
 /**
- * FSOC — Mission Control
- * Primary landing screen. Camera feed + target config + live metrics.
+ * FSOC — Mission Control (Environment)
+ * Aerospace console layout: mission header, central 3D digital twin (or
+ * fixed 2D sensor feed), compact right telemetry rail, entity bar.
+ * All values are live runtime telemetry — unavailable reads render as —.
  */
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSimulation } from '../../hooks/useSimulation';
 import { CameraFeed } from '../../components/simulation/CameraFeed';
 import { SimulationViewport } from '../../components/simulation/SimulationViewport';
-import { TargetStateIndicator } from '../../components/telemetry/TargetStateIndicator';
+import type { TwinApi, TwinViewName } from '../../components/simulation/Scene3D';
 import { PS169_CONFIG, validatePs169Config } from '../../config/ps169';
 import { EventLog } from '../../components/telemetry/EventLog';
 import type { TargetState } from '../../types/fsoc';
+import './MissionControlPage.css';
 
 // ── Target configuration form state ───────────────────────────
 interface TargetForm {
@@ -64,12 +67,48 @@ const PLATFORM_MOTIONS = ['stationary', 'linear', 'uav_hover', 'orbital', 'circu
 type AtmosMode = typeof ATMOS_MODES[number];
 type PlatformMotion = typeof PLATFORM_MOTIONS[number];
 
+// ── Single consistent status language ─────────────────────────
+const STATUS_META: Record<TargetState, { label: string; color: string }> = {
+  READY:       { label: 'READY',         color: '#8d9195' },
+  SEARCHING:   { label: 'SEARCHING',     color: '#e39a32' },
+  DETECTED:    { label: 'DETECTED',      color: '#f0b35a' },
+  ACQUIRING:   { label: 'ACQUIRING',     color: '#e39a32' },
+  TRACKING:    { label: 'TRACKING',      color: '#4fd8cd' },
+  LOCKED:      { label: 'LOCKED',        color: '#3ddc84' },
+  LOST:        { label: 'TARGET LOST',   color: '#c96a5a' },
+  REACQUIRING: { label: 'REACQUIRING',   color: '#e39a32' },
+  ERROR:       { label: 'ERROR',         color: '#c96a5a' },
+};
+
+const VIEW_OPTIONS: { value: TwinViewName; label: string }[] = [
+  { value: 'target', label: 'Target' },
+  { value: 'camera', label: 'Camera' },
+  { value: 'iso',    label: 'Full' },
+  { value: 'top',    label: 'Top' },
+  { value: 'front',  label: 'Front' },
+  { value: 'side',   label: 'Side' },
+  { value: 'reset',  label: 'Reset' },
+];
+
+function entityDot(id: string): string {
+  if (id === 'SAT-01') return '#7fa8c4';
+  if (id === 'FSOC-CAM-01') return '#8fa98f';
+  if (id.startsWith('BEACON')) return '#d05a4a';
+  return '#e39a32';
+}
+
+// Backend frames can carry partial metrics (e.g. pre-run snapshots), so
+// every numeric readout goes through this: non-finite → null → '—'.
+function num(v: unknown, digits = 1): string | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : null;
+}
+
 export function MissionControlPage() {
   const sim = useSimulation();
   const nav = useNavigate();
 
   const [starting, setStarting]     = useState(false);
-  const [viewMode, setViewMode]   = useState<'camera' | '3d'>('3d');
+  const [viewMode, setViewMode]   = useState<'3d' | 'camera'>('3d');
   const [showConfig, setShowConfig] = useState(false);
   const [environment, setEnvironment] = useState<string>('urban');
   const [atmosMode, setAtmosMode]   = useState<AtmosMode>('clear');
@@ -80,17 +119,72 @@ export function MissionControlPage() {
   const [videoUploading, setVideoUploading] = useState(false);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
+  // 3D twin external control surface (minimal-chrome embed)
+  const [twin, setTwin] = useState<TwinApi | null>(null);
+  const [viewSel, setViewSel] = useState<TwinViewName>('target');
+  const vizRef = useRef<HTMLDivElement>(null);
+  const [isFullView, setIsFullView] = useState(false);
+
+  useEffect(() => {
+    const h = () => setIsFullView(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', h);
+    return () => document.removeEventListener('fullscreenchange', h);
+  }, []);
+
+  // Immersive view: fullscreen viewport + viewer follows the selection.
+  // Visualization only — never touches the tracking loop.
+  const toggleFollowView = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        twin?.setCameraMode('free');
+      } else {
+        twin?.setCameraMode('follow');
+        await vizRef.current?.requestFullscreen();
+      }
+    } catch (e) {
+      console.error('Fullscreen view failed', e);
+    }
+  };
+
+  // UTC wall clock for the mission header
+  const [nowUtc, setNowUtc] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNowUtc(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Event-log Clear: hide everything up to the newest visible event id.
+  const [clearedEventId, setClearedEventId] = useState<string | null>(null);
+  const visibleEvents = clearedEventId
+    ? sim.events.slice(sim.events.findIndex(e => e.id === clearedEventId) + 1)
+    : sim.events;
+
   const f   = sim.latest;
   const met = f?.metrics;
 
-  // Same authoritative disturbance state as the Disturbance Lab.
-  // ON if the shared store says so or a live telemetry echo confirms it.
-  const turbActive = sim.disturbances.atmospheric_turbulence.enabled
-    || (f?.disturbance?.config?.atmospheric_turbulence?.enabled ?? false);
-  const activeDistCount = f?.disturbance?.active_count ?? 0;
-
   const isRunning = sim.simStatus === 'running';
   const isPaused  = sim.simStatus === 'paused';
+
+  const targetState = (sim.targetState as TargetState) ?? 'READY';
+  const statusMeta = STATUS_META[targetState] ?? STATUS_META.READY;
+
+  const simPill = isRunning
+    ? { label: 'SIMULATION', color: '#8fa98f' }
+    : isPaused
+    ? { label: 'PAUSED', color: '#e39a32' }
+    : sim.simStatus === 'error'
+    ? { label: 'ERROR', color: '#c96a5a' }
+    : { label: 'IDLE', color: '#626a6d' };
+
+  const liveTargetId = f?.target?.entity?.id ?? f?.target?.id ?? target.id;
+  const liveBeaconId = f?.target?.entity?.beaconId ?? f?.target?.beacon?.id ?? target.id;
+  // Target and beacon ids can coincide pre-run (both default to the
+  // configured id) — dedupe so React keys stay unique.
+  const entityIds = Array.from(new Set(
+    viewMode === '3d' && twin ? twin.entityIds : ['SAT-01', 'FSOC-CAM-01', liveTargetId, liveBeaconId],
+  ));
+  const selectedEntity = viewMode === '3d' ? twin?.selectedId ?? null : null;
 
   const buildConfig = () => ({
     name: `FSOC-DEMO-042`,
@@ -165,10 +259,6 @@ export function MissionControlPage() {
   const handleVideoUpload = async (file: File) => {
     setVideoFile(file);
     setVideoUploading(true);
-    // Move straight to the tracking console and retain an explicit loading
-    // state while the (potentially large) MP4 is still being uploaded.
-    // Do not reload the document here: that interrupts/defers the upload and
-    // leaves the user staring at a blank route.
     sessionStorage.setItem('asteria-video-upload-pending', '1');
     nav('/tracking');
     try {
@@ -180,8 +270,6 @@ export function MissionControlPage() {
       });
       const data = await res.json();
       if (data.success) {
-        // The WebSocket VIDEO_LOADING/VIDEO_READY packets now take over the
-        // visual state; the tracking page is already mounted and subscribed.
         sessionStorage.removeItem('asteria-video-upload-pending');
       }
     } catch (e) {
@@ -192,104 +280,32 @@ export function MissionControlPage() {
     }
   };
 
+  const utcStr = nowUtc.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+
   return (
-    <div className="mc-root">
+    <div className="mc2-root">
 
-      {/* ── Top bar ─────────────────────────────────────────── */}
-      <div className="mc-topbar">
-        <div className="mc-topbar-left">
-          <span className="mc-eyebrow">ASTERIA · FSOC COARSE ALIGNMENT · PS169</span>
-          <span className="mc-title">Mission Control</span>
+      {/* ── Mission header ─────────────────────────────────── */}
+      <header className="mc2-header">
+        <div className="mc2-mission-id">
+          <span className="mc2-mid">PS169</span>
+          <span className="mc2-mid-sep">|</span>
+          <span className="mc2-mid">FSOC COARSE ALIGNMENT</span>
+          <span className="mc2-mid-sep">|</span>
+          <span className="mc2-mid">FSOC-DEMO-042</span>
         </div>
-
-        <div className="mc-topbar-center">
-          {!isRunning && !isPaused ? (
-            <div className="mc-start-group">
-              <button
-                className="mc-btn-start"
-                onClick={handleStartDemo}
-                disabled={starting}
-              >
-                <span className="mc-btn-icon">▶</span>
-                {starting ? 'INITIALISING…' : 'START DEMO'}
-              </button>
-              <button
-                className="mc-btn-custom"
-                onClick={handleStartCustom}
-                disabled={starting}
-                title="Start with custom target configuration"
-              >
-                START CUSTOM
-              </button>
-              <button
-                className={`mc-btn-config${showConfig ? ' mc-btn-config--active' : ''}`}
-                onClick={() => setShowConfig(s => !s)}
-                title="Configure target & environment"
-              >
-                ⚙ CONFIGURE
-              </button>
-              {/* Benchmark 2 — Video input mode (no title attr: a hover
-                  tooltip can freeze on screen across the post-upload
-                  navigation to /tracking) */}
-              <button
-                className="mc-btn-video"
-                onClick={() => videoInputRef.current?.click()}
-                disabled={videoUploading}
-              >
-                {videoUploading ? '⏳ PROCESSING…' : '📹 UPLOAD VIDEO'}
-              </button>
-              <input
-                ref={videoInputRef}
-                type="file"
-                accept="video/mp4,video/*"
-                style={{ display: 'none' }}
-                onChange={e => { const f = e.target.files?.[0]; if (f) handleVideoUpload(f); }}
-              />
-              {videoFile && !videoUploading && (
-                <span className="mc-video-name" title={videoFile.name}>
-                  📹 {videoFile.name.slice(0, 20)}{videoFile.name.length > 20 ? '…' : ''}
-                </span>
-              )}
-            </div>
-          ) : (
-            <div className="mc-running-controls">
-              <button className="mc-btn-ctrl mc-btn-pause" onClick={() => sim.pause()}>
-                {isPaused ? '▶ RESUME' : '⏸ PAUSE'}
-              </button>
-              <button className="mc-btn-ctrl mc-btn-stop" onClick={() => sim.stop()}>
-                ■ STOP
-              </button>
-              <button className="mc-btn-ctrl mc-btn-stop" onClick={() => sim.endDemo()} title="End demo and clear runtime-created entities">
-                ◼ END DEMO
-              </button>
-              <button className="mc-btn-ctrl mc-btn-track" onClick={() => nav('/tracking')}>
-                TRACKING →
-              </button>
-            </div>
-          )}
+        <div className="mc2-header-right">
+          <span className="mc2-clock" title={f && num(f.elapsed) ? `Mission elapsed T+${num(f.elapsed)}s` : 'No active run'}>
+            {utcStr}{f && num(f.elapsed) ? `  ·  T+${num(f.elapsed)}s` : ''}
+          </span>
+          <span className="mc2-simpill">
+            <span className="mc2-simdot" style={{ background: simPill.color }} />
+            <span style={{ color: simPill.color }}>{simPill.label}</span>
+          </span>
         </div>
+      </header>
 
-        <div className="mc-topbar-right">
-          {turbActive && (
-            <div
-              className="mc-ws-pill"
-              data-status="warning"
-              title={`Atmospheric turbulence active — ${activeDistCount} disturbance(s) live`}
-            >
-              <span className="mc-ws-dot" />
-              ATMOSPHERIC TURBULENCE ACTIVE
-            </div>
-          )}
-          <div className="mc-ws-pill" data-status={sim.wsStatus}>
-            <span className="mc-ws-dot" />
-            {sim.wsStatus === 'connected' ? 'TELEMETRY LIVE'
-             : sim.wsStatus === 'error'   ? 'CONN ERROR'
-             : 'OFFLINE'}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Configuration panel (collapsible) ───────────────── */}
+      {/* ── Configuration panel (collapsible, idle only) ───── */}
       {showConfig && !isRunning && !isPaused && (
         <div className="mc-config-panel">
           <div className="mc-config-inner">
@@ -310,7 +326,7 @@ export function MissionControlPage() {
               </div>
             </div>
 
-            {/* Target ID */}
+            {/* Test presets */}
             <div className="mc-cfg-group">
               <div className="mc-cfg-label">CLOSED-LOOP TEST PRESETS (CLEAN: NOISE OFF · CLEAR · STATIONARY)</div>
               <div className="mc-cfg-row">
@@ -469,137 +485,291 @@ export function MissionControlPage() {
               <span className="mc-cfg-sum-sep">·</span>
               <span className="mc-cfg-sum-item">POS: <b>({target.start_x}, {target.start_y}, {target.start_z})</b></span>
             </div>
+            {videoFile && !videoUploading && (
+              <div className="mc-cfg-summary">
+                <span className="mc-cfg-sum-item">VIDEO: <b>{videoFile.name}</b></span>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* ── Main body ───────────────────────────────────────── */}
-      <div className="mc-body">
+      <div className="mc2-body">
 
-        {/* LEFT — camera feed / 3d view */}
-        <div className="mc-feed-col">
-          <div className={`mc-feed-wrapper${viewMode === '3d' ? ' mc-feed-wrapper--3d' : ''}`}>
-            <div className="mc-view-toggle" role="tablist" aria-label="Mission visualisation">
+        {/* CENTER — primary visualization + entities */}
+        <section className="mc2-center">
+          <div className="mc2-twin">
+            <div className="mc2-twin-head">
+              <div className="mc2-twin-titles">
+                <div className="mc2-twin-title">{viewMode === '3d' ? '3D DIGITAL TWIN' : 'CAMERA FEED (2D)'}</div>
+                <div className="mc2-twin-sub">
+                  {viewMode === '3d' ? 'Real-time FSOC Simulation' : 'Fixed sensor · moving FOV rectangle'}
+                </div>
+              </div>
+              {/* Center slot is always mounted (fixed height) so swapping
+                  idle ↔ run controls never shifts the page vertically. */}
+              <div className="mc2-twin-runcontrols">
+                {!isRunning && !isPaused ? (
+                  <>
+                    <button className="mc2-btn mc2-btn-start" onClick={handleStartDemo} disabled={starting}>
+                      {starting ? 'INITIALISING…' : '▶ START DEMO'}
+                    </button>
+                    <button className="mc2-btn" onClick={handleStartCustom} disabled={starting}>
+                      START CUSTOM
+                    </button>
+                    <button
+                      className={`mc2-btn${showConfig ? ' mc2-btn--on' : ''}`}
+                      onClick={() => setShowConfig(s => !s)}
+                    >
+                      CONFIGURE
+                    </button>
+                    <button className="mc2-btn" onClick={() => videoInputRef.current?.click()} disabled={videoUploading}>
+                      {videoUploading ? 'PROCESSING…' : 'UPLOAD VIDEO'}
+                    </button>
+                    <input
+                      ref={videoInputRef}
+                      type="file"
+                      accept="video/mp4,video/*"
+                      style={{ display: 'none' }}
+                      onChange={e => { const fl = e.target.files?.[0]; if (fl) handleVideoUpload(fl); }}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <button
+                      className="mc2-btn mc2-btn-pause"
+                      onClick={() => sim.pause()}
+                      title={isPaused ? 'Resume the simulation' : 'Freeze simulation state'}
+                    >
+                      {isPaused ? '▶ RESUME' : '❚❚ PAUSE'}
+                    </button>
+                    <button
+                      className="mc2-btn mc2-btn-end"
+                      onClick={() => sim.endDemo()}
+                      title="End demo and clear runtime-created entities"
+                    >
+                      ◼ END DEMO
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="mc2-twin-head-right">
+                <div className="mc2-seg" role="tablist" aria-label="Visualization mode">
+                  <button
+                    type="button"
+                    className={`mc2-seg-btn${viewMode === '3d' ? ' mc2-seg-btn--on' : ''}`}
+                    onClick={() => setViewMode('3d')}
+                  >
+                    3D
+                  </button>
+                  <button
+                    type="button"
+                    className={`mc2-seg-btn${viewMode === 'camera' ? ' mc2-seg-btn--on' : ''}`}
+                    onClick={() => setViewMode('camera')}
+                  >
+                    2D
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="mc2-viz" ref={vizRef}>
+              {viewMode === '3d' ? (
+                <SimulationViewport frame={f} history={sim.history} minimalChrome onTwinApi={setTwin} />
+              ) : (
+                <CameraFeed
+                  frame={f}
+                  width={640}
+                  height={480}
+                  atmosMode={atmosMode}
+                  noiseMode="gaussian"
+                  beaconShape={target.beaconShape}
+                  beaconSize={target.beaconSize}
+                />
+              )}
+              {/* Overlays render AFTER the canvas so they always paint above it,
+                  in normal and fullscreen mode alike. */}
+              {viewMode === '3d' && (
+                <div className="mc2-viz-status" title="Live tracking state">
+                  <span className="mc2-status-dot" style={{ background: statusMeta.color }} />
+                  <span style={{ color: statusMeta.color }}>{statusMeta.label}</span>
+                </div>
+              )}
+              {viewMode === '3d' && (
+                <div className="mc2-viz-controls">
+                  <label className="mc2-select-wrap">
+                    <span className="mc2-select-tag">View:</span>
+                    <select
+                      className="mc2-select"
+                      value={viewSel}
+                      onChange={e => {
+                        const v = e.target.value as TwinViewName;
+                        setViewSel(v);
+                        twin?.requestView(v);
+                      }}
+                      disabled={!twin}
+                      title="One-time viewer focus preset (visualization only)"
+                    >
+                      {VIEW_OPTIONS.map(o => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className={`mc2-btn mc2-btn-view${twin?.cameraMode === 'follow' ? ' mc2-btn--on' : ''}`}
+                    onClick={toggleFollowView}
+                    disabled={!twin}
+                    title="Fullscreen viewport with viewer following the selection (visualization only)"
+                  >
+                    {isFullView ? '⛶ EXIT' : '⛶ VIEW'}
+                  </button>
+                </div>
+              )}
+              {viewMode === '3d' && (
+                <div className="mc2-toggles" role="group" aria-label="Visualization layers">
+                  {(['fov', 'labels'] as const).map(k => {
+                    const on = twin?.toggles[k] ?? true;
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        className={`mc2-tgl${on ? ' mc2-tgl--on' : ''}`}
+                        onClick={() => twin && twin.setToggle(k, !twin.toggles[k])}
+                        disabled={!twin}
+                        title={k === 'fov' ? 'FSOC optical FOV cone' : 'Entity labels'}
+                      >
+                        <span className="mc2-tgl-dot" />
+                        {k === 'fov' ? 'FOV' : 'Labels'}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mc2-entities">
+              <span className="mc2-entities-label">ENTITIES</span>
+              <div className="mc2-entities-row">
+                {entityIds.map(id => {
+                  const selected = selectedEntity === id;
+                  const interactive = viewMode === '3d' && !!twin;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`mc2-ent${selected ? ' mc2-ent--sel' : ''}`}
+                      onClick={() => { if (interactive) twin!.select(selected ? null : id); }}
+                      disabled={!interactive}
+                      title={interactive ? `Select ${id} in the twin` : id}
+                    >
+                      <span className="mc2-ent-dot" style={{ background: entityDot(id) }} />
+                      {id}
+                    </button>
+                  );
+                })}
+              </div>
+              {viewMode === '3d' && (
+                <div className="mc2-entities-add">
+                  <button
+                    type="button"
+                    className="mc2-ent-add"
+                    onClick={() => twin?.addEntity('target')}
+                    disabled={!twin}
+                    title="Spawn an operator-owned target platform in the twin"
+                  >
+                    + TARGET
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* RIGHT — mission / tracking / performance / events */}
+        <aside className="mc2-rail">
+          <div className="mc2-card">
+            <div className="mc2-card-head">MISSION</div>
+            <div className="mc2-rows">
+              <div className="mc2-row"><span className="mc2-key">Scenario</span><span className="mc2-val">{environment.replace('_', ' ').toUpperCase()}</span></div>
+              <div className="mc2-row"><span className="mc2-key">Target</span><span className="mc2-val">{liveTargetId}</span></div>
+              <div className="mc2-row"><span className="mc2-key">Trajectory</span><span className="mc2-val">{target.trajectory.toUpperCase()}</span></div>
+              <div className="mc2-row">
+                <span className="mc2-key">Status</span>
+                <span className="mc2-val" style={{ color: statusMeta.color }}>
+                  <span className="mc2-status-dot" style={{ background: statusMeta.color }} />
+                  {statusMeta.label}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mc2-card">
+            <div className="mc2-card-head">TRACKING</div>
+            <div className="mc2-rows">
+              <div className="mc2-row">
+                <span className="mc2-key">Confidence</span>
+                <span className="mc2-val">{num(met?.detection_confidence, 3) != null ? `${((met?.detection_confidence ?? 0) * 100).toFixed(1)} %` : '—'}</span>
+              </div>
+              <div className="mc2-row">
+                <span className="mc2-key">PAN</span>
+                <span className="mc2-val">{num(f?.camera?.pan, 2) != null ? `${num(f?.camera?.pan, 2)} °` : '—'}</span>
+              </div>
+              <div className="mc2-row">
+                <span className="mc2-key">TILT</span>
+                <span className="mc2-val">{num(f?.camera?.tilt, 2) != null ? `${num(f?.camera?.tilt, 2)} °` : '—'}</span>
+              </div>
+              <div className="mc2-row">
+                <span className="mc2-key">Error</span>
+                <span className="mc2-val">{num(f?.pixel_error?.total) != null ? `${num(f?.pixel_error?.total)} px` : '—'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mc2-card">
+            <div className="mc2-card-head">PERFORMANCE</div>
+            <div className="mc2-rows">
+              <div className="mc2-row">
+                <span className="mc2-key">FPS</span>
+                <span className="mc2-val">{num(met?.fps) ?? '—'}</span>
+              </div>
+              <div className="mc2-row">
+                <span className="mc2-key">Latency</span>
+                <span className="mc2-val">{num(met?.processing_ms) != null ? `${num(met?.processing_ms)} ms` : '—'}</span>
+              </div>
+              <div className="mc2-row">
+                <span className="mc2-key">Avg Error</span>
+                <span className="mc2-val">{num(met?.average_error_px) != null ? `${num(met?.average_error_px)} px` : '—'}</span>
+              </div>
+              <div className="mc2-row">
+                <span className="mc2-key">Lock Retention</span>
+                <span className="mc2-val">{num(met?.lock_retention) != null && (met?.lock_retention ?? 0) > 0 ? `${num(met?.lock_retention)} %` : '—'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mc2-card mc2-card--log">
+            <div className="mc2-card-head mc2-log-head">
+              <span>EVENT LOG</span>
               <button
                 type="button"
-                className={`mc-view-btn${viewMode === 'camera' ? ' mc-view-btn--active' : ''}`}
-                onClick={() => setViewMode('camera')}
+                className="mc2-clear"
+                onClick={() => setClearedEventId(visibleEvents.length ? visibleEvents[visibleEvents.length - 1].id : null)}
+                disabled={visibleEvents.length === 0}
               >
-                CAMERA FEED (2D)
-              </button>
-              <button
-                type="button"
-                className={`mc-view-btn${viewMode === '3d' ? ' mc-view-btn--active' : ''}`}
-                onClick={() => setViewMode('3d')}
-              >
-                3-D VIEW
+                Clear
               </button>
             </div>
-            <div className="mc-state-overlay">
-              <TargetStateIndicator
-                state={(sim.targetState as TargetState) ?? 'READY'}
-                large
-              />
-            </div>
-            {viewMode === 'camera' ? (
-              <CameraFeed frame={f} width={640} height={480} atmosMode={atmosMode} noiseMode="gaussian" beaconShape={target.beaconShape} beaconSize={target.beaconSize} />
-            ) : (
-              <div className="mc-3d-canvas">
-                <SimulationViewport frame={f} history={sim.history} />
-              </div>
-            )}
+            <EventLog events={visibleEvents} maxHeight={180} />
           </div>
-
-          {!isRunning && !isPaused && (
-            <div className="mc-demo-steps">
-              <span className="mc-demo-steps-label">DEMO SEQUENCE</span>
-              <div className="mc-steps-grid">
-                {[
-                  'Initialise environment', 'Spawn optical beacon',
-                  'AI detects beacon',      'Kalman predicts trajectory',
-                  'PID centres camera',     'TARGET LOCKED',
-                  'Introduce turbulence',   'Platform vibration',
-                  'Controller compensates', 'Performance summary',
-                ].map((step, i) => (
-                  <div key={i} className="mc-step">
-                    <span className="mc-step-n">{String(i+1).padStart(2,'0')}</span>
-                    <span className="mc-step-label">{step}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* RIGHT — telemetry + events */}
-        <div className="mc-stats-col">
-          <div className="mc-id-block">
-            {[
-              ['MISSION',     'FSOC-DEMO-042'],
-              ['SCENARIO',    environment.replace('_',' ').toUpperCase()],
-              ['TARGET',      target.id],
-              ['TRAJECTORY',  target.trajectory.toUpperCase()],
-              ['DETECTOR',    f?.detection?.detector?.toUpperCase() ?? '—'],
-            ].map(([k, v]) => (
-              <div key={k} className="mc-id-row">
-                <span className="mc-id-key">{k}</span>
-                <span className="mc-id-val">{v}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mc-sep" />
-
-          <div className="mc-metrics-grid">
-            <Metric label="ACQUISITION"  value={met?.acquisition_time != null ? `${met.acquisition_time.toFixed(2)} s` : '—'} ok={met?.acquisition_time != null} />
-            <Metric label="AVG ERROR"    value={met?.average_error != null ? `${met.average_error.toFixed(3)}°` : '—'} />
-            <Metric label="MAX ERROR"    value={met?.max_error != null ? `${met.max_error.toFixed(3)}°` : '—'} warn={(met?.max_error ?? 0) > 3} />
-            <Metric label="AVG ERR PX"   value={met?.average_error_px != null ? `${met.average_error_px.toFixed(2)} px` : '—'} />
-            <Metric label="RMSE PX"      value={met?.rmse_px != null ? `${met.rmse_px.toFixed(2)} px` : '—'} ok={(met?.rmse_px ?? 99) <= 10} />
-            <Metric label="LOCK RET."    value={met?.lock_retention != null ? `${met.lock_retention.toFixed(1)}%` : '—'} ok={(met?.lock_retention ?? 0) > 95} />
-            <Metric label="FPS"          value={met?.fps != null ? met.fps.toFixed(1) : '—'} />
-            <Metric label="LATENCY"      value={met?.processing_ms != null ? `${met.processing_ms.toFixed(1)} ms` : '—'} />
-            <Metric label="CONFIDENCE"   value={met?.detection_confidence != null ? `${(met.detection_confidence*100).toFixed(1)}%` : '—'} ok={(met?.detection_confidence ?? 0) > 0.9} />
-            <Metric label="PAN"          value={f?.camera.pan  != null ? `${f.camera.pan.toFixed(2)}°` : '—'} />
-            <Metric label="TILT"         value={f?.camera.tilt != null ? `${f.camera.tilt.toFixed(2)}°` : '—'} />
-            <Metric label="TOTAL ERR"    value={f?.angular_error?.total_error != null ? `${f.angular_error.total_error.toFixed(3)}°` : '—'} warn={(f?.angular_error?.total_error ?? 0) > 2} />
-          </div>
-
-          <div className="mc-sep" />
-          <div className="mc-section-label">SYSTEM EVENTS</div>
-          <EventLog events={sim.events} maxHeight={200} />
-
-          <div className="mc-sep" />
-          <div className="mc-quicknav">
-            {([
-              ['Live Tracking', '/tracking'],
-              ['Detection',     '/detection'],
-              ['Disturbances',  '/disturbances'],
-              ['Analytics',     '/analytics'],
-              ['Reports',       '/reports'],
-              ['Copilot',       '/copilot'],
-            ] as [string,string][]).map(([label, path]) => (
-              <button key={path} className="mc-qnav-btn" onClick={() => nav(path)}>
-                {label} →
-              </button>
-            ))}
-          </div>
-        </div>
+        </aside>
       </div>
     </div>
   );
 }
 
 // ── Sub-components ─────────────────────────────────────────────
-
-function Metric({ label, value, ok, warn }: { label: string; value: string; ok?: boolean; warn?: boolean }) {
-  return (
-    <div className="mc-metric">
-      <span className="mc-metric-label">{label}</span>
-      <span className={`mc-metric-val${ok ? ' mc-metric-ok' : warn ? ' mc-metric-warn' : ''}`}>{value}</span>
-    </div>
-  );
-}
 
 function CfgSlider({ label, value, min, max, step, onChange }: {
   label: string; value: number; min: number; max: number; step: number;
