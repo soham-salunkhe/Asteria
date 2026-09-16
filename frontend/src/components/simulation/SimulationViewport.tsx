@@ -38,6 +38,7 @@ export function SimulationViewport({ frame, history, minimalChrome, onTwinApi }:
         display: 'flex',
         flexDirection: 'column',
         background: '#101a29',
+        overflow: 'hidden',
       }}
     >
       <Suspense

@@ -131,15 +131,12 @@ export function MissionControlPage() {
     return () => document.removeEventListener('fullscreenchange', h);
   }, []);
 
-  // Immersive view: fullscreen viewport + viewer follows the selection.
-  // Visualization only — never touches the tracking loop.
+  // Full view: toggle fullscreen viewport (layout/presentation only — never modifies camera or tracking).
   const toggleFollowView = async () => {
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen();
-        twin?.setCameraMode('free');
       } else {
-        twin?.setCameraMode('follow');
         await vizRef.current?.requestFullscreen();
       }
     } catch (e) {

@@ -1226,3 +1226,17 @@ body {
 }
 .mc-cfg-sum-item b { color: var(--text-2); }
 .mc-cfg-sum-sep    { color: var(--border-2); }
+
+/* 3D viewport — canvas containment (fullscreen-exit sizing fix).
+   The WebGL canvas must always equal its CURRENT container box. R3F
+   writes explicit pixel styles on the canvas during resizes; those
+   values must never size the canvas or its ancestors, otherwise
+   post-fullscreen geometry persists after exit. The drawing buffer is
+   managed separately via setPixelRatio. */
+.three-viewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}

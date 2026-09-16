@@ -12,7 +12,7 @@
  *   Target motion → virtual camera → 2D feed → detection → Kalman →
  *   pan/tilt controller → virtual camera orientation → updated 3D FOV.
  */
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html, Line, OrbitControls, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -1804,22 +1804,12 @@ const chipOn: React.CSSProperties = { borderColor: '#d98618', color: '#f0b35a' }
 let localTargetCounter = 1;
 let localSatCounter = 1;
 
-// ── Responsive Resizer for Operator Viewport ───────────────────────
-function ResponsiveResizer({ containerWidth, containerHeight }: { containerWidth?: number; containerHeight?: number }) {
-  const { gl, camera, size } = useThree();
-
+// ── Single Authoritative Viewport Bridge (Phases 4, 5, 6) ───────────
+function ViewportBridge({ onReady }: { onReady: (gl: THREE.WebGLRenderer, cam: THREE.Camera) => void }) {
+  const { gl, camera } = useThree();
   useEffect(() => {
-    const w = containerWidth && containerWidth > 0 ? containerWidth : size.width;
-    const h = containerHeight && containerHeight > 0 ? containerHeight : size.height;
-    if (w > 0 && h > 0) {
-      gl.setSize(w, h, false);
-      if ('aspect' in camera) {
-        (camera as THREE.PerspectiveCamera).aspect = w / h;
-        camera.updateProjectionMatrix();
-      }
-    }
-  }, [gl, camera, size.width, size.height, containerWidth, containerHeight]);
-
+    onReady(gl, camera);
+  }, [gl, camera, onReady]);
   return null;
 }
 
@@ -1839,25 +1829,85 @@ interface Props {
 }
 
 export default function Scene3D({ frame, history, minimalChrome = false, onTwinApi }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [containerSize, setContainerSize] = useState<{ width: number; height: number } | null>(null);
+  // Phase 4: Single authoritative viewport ref
+  const threeViewportRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const cameraRef = useRef<THREE.Camera | null>(null);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+  // Phase 5: Exactly ONE authoritative resize function
+  const resizeThreeViewport = useCallback(() => {
+    const container = threeViewportRef.current;
+    const renderer = rendererRef.current;
+    const viewerCamera = cameraRef.current;
+    if (!container || !renderer || !viewerCamera) return;
 
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        if (width > 0 && height > 0) {
-          setContainerSize({ width, height });
-        }
-      }
-    });
+    const rect = container.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
 
-    ro.observe(el);
-    return () => ro.disconnect();
+    // Phase 40: Skip zero-dimension transitions
+    if (width <= 0 || height <= 0) return;
+
+    // Phase 19: Device pixel ratio capped at 2, no double-multiplication
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(width, height, false);
+
+    // Phase 20: Camera aspect ratio update only (never touch position/rotation)
+    let appliedAspect = width / height;
+    if ('aspect' in viewerCamera) {
+      const persp = viewerCamera as THREE.PerspectiveCamera;
+      persp.aspect = width / height;
+      persp.updateProjectionMatrix();
+      appliedAspect = persp.aspect;
+    }
+
+    // Phase 45: Diagnostics behind DEBUG_3D_VIEWPORT
+    if (typeof window !== 'undefined' && (window as any).DEBUG_3D_VIEWPORT) {
+      const canvas = renderer.domElement;
+      const canvasRect = canvas.getBoundingClientRect();
+      const isFs = !!document.fullscreenElement;
+      console.log(
+        `[ASTERIA 3D RESIZE]\nmode=${isFs ? 'FULLSCREEN' : 'NORMAL'}\ncontainer=${width} x ${height}\ncanvas=${Math.round(canvasRect.width)} x ${Math.round(canvasRect.height)}\nrenderer=${canvas.width} x ${canvas.height}\ncameraAspect=${appliedAspect.toFixed(4)}`
+      );
+    }
   }, []);
+
+  // Stable bridge callback: registering renderer/camera must not re-fire
+  // (and re-invoke resize) on every parent render — only when the
+  // three.js instance itself changes.
+  const handleViewportReady = useCallback((gl: THREE.WebGLRenderer, cam: THREE.Camera) => {
+    rendererRef.current = gl;
+    cameraRef.current = cam;
+    resizeThreeViewport();
+  }, [resizeThreeViewport]);
+
+  // Phase 15 & 16: Single ResizeObserver and fullscreenchange listener
+  useEffect(() => {
+    const container = threeViewportRef.current;
+    if (!container) return;
+
+    const ro = new ResizeObserver(() => {
+      resizeThreeViewport();
+    });
+    ro.observe(container);
+
+    const onFullscreen = () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => resizeThreeViewport());
+      });
+    };
+    document.addEventListener('fullscreenchange', onFullscreen);
+    window.addEventListener('resize', resizeThreeViewport);
+
+    // Initial sizing
+    resizeThreeViewport();
+
+    return () => {
+      ro.disconnect();
+      document.removeEventListener('fullscreenchange', onFullscreen);
+      window.removeEventListener('resize', resizeThreeViewport);
+    };
+  }, [resizeThreeViewport]);
   const [settings, setSettings] = useState<SceneSettings>({ brightness: 1, stars: true, fov: true, trajectory: true, labels: true });
   const [objects, setObjects] = useState<SceneObjectDef[]>([]);
   const [entityGraph, setEntityGraph] = useState<SimulationEntity[]>([]);
@@ -2341,7 +2391,8 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
 
   return (
     <div
-      ref={containerRef}
+      ref={threeViewportRef}
+      className="three-viewport"
       style={{
         position: 'relative',
         width: '100%',
@@ -2360,7 +2411,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
         camera={{ position: [4.8, 2.8, 7.4], fov: 43, near: 0.01, far: 200 }}
         gl={{ antialias: true, alpha: false, logarithmicDepthBuffer: true }}
         dpr={[1, 1.5]}
-        style={{ width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'block', flex: 1 }}
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', minWidth: 0, minHeight: 0, display: 'block' }}
         onPointerMissed={() => {
           // Don't disrupt camera mode when follow is active
           if (cameraMode !== 'follow') {
@@ -2368,7 +2419,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
           }
         }}
       >
-        <ResponsiveResizer containerWidth={containerSize?.width} containerHeight={containerSize?.height} />
+        <ViewportBridge onReady={handleViewportReady} />
         <SceneContent
           frame={frame}
           history={history}
