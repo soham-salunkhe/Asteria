@@ -78,8 +78,6 @@ export function SideNav({ wsStatus, simStatus }: Props) {
         ))}
       </ul>
 
-      <div className="sidenav-spacer" />
-
       {/* Copilot */}
       <NavLink
         to="/copilot"

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import './LandingPage.css';
 
@@ -152,78 +152,23 @@ function PixelHeadline() {
   );
 }
 
-/* Ground target sits on the earth artwork's rim (artwork: public/earth.png,
-   placed at x=0 y=143 w=1600 h=1067 — rim lands at viewBox y≈768) */
-const CROSS = { x: 1180, y: 662 };
+/* ── Binary FSOC pair: live 3D orbital visualization.
+      The real-time scene (two satellites on crossed tilted orbits with a
+      bidirectional optical link) lives in components/landing/OrbitalPair3D
+      (react-three-fiber, already used by the app's 3D views). It is
+      lazy-loaded so the landing paints before the GL bundle arrives. ─── */
+const OrbitalPair3D = lazy(() => import('../components/landing/OrbitalPair3D'));
+
+/* Spacecraft geometry now lives in the 3D scene (OrbitalPair3D). */
 
 function PixelSatellite() {
-  // satellite artwork frame (public/satellite.png, 3:2) + beam origin at its dish
-  const BEAM_X = 1010;
-  const BEAM_Y = 371;
-
   return (
-    <div className="lp-diagram" aria-label="Satellite beaming to a ground target above a dithered planet curve">
-
-      <svg
-        viewBox="0 0 1600 900"
-        preserveAspectRatio="xMidYMax slice"
-        role="img"
-        aria-label="Satellite, laser beam, crosshair and earth horizon"
-        shapeRendering="crispEdges"
-        className="px-svg"
-      >
-        {/* ── earth artwork (black melts away, arc grounds on the page bottom) ── */}
-        <image
-          href="/earth.png"
-          x={607} y={236} width={1000} height={667}
-          preserveAspectRatio="xMidYMid meet"
-          className="px-photo px-earth"
-        />
-        {/* ── satellite artwork (amber line art on black — blends via screen) ── */}
-        <image
-          href="/satellite.png"
-          x={837} y={194} width={416} height={277}
-          preserveAspectRatio="xMidYMid meet"
-          className="px-photo"
-        />
-
-        {/* ── dashed laser beam satellite → ground ── */}
-        <line
-          x1={BEAM_X} y1={BEAM_Y} x2={CROSS.x} y2={CROSS.y - 30}
-          className="px-beam px-beam-glow"
-        />
-        <line
-          x1={BEAM_X} y1={BEAM_Y} x2={CROSS.x} y2={CROSS.y - 30}
-          className="px-beam"
-        />
-        {/* data packets riding the beam down to the target */}
-        {[0, -1.2].map((b, i) => (
-          <rect key={i} x={-4} y={-4} width={8} height={8} className="px-packet">
-            <animateMotion
-              dur="2.4s"
-              begin={`${b}s`}
-              repeatCount="indefinite"
-              path={`M ${BEAM_X} ${BEAM_Y} L ${CROSS.x} ${CROSS.y - 34}`}
-            />
-          </rect>
-        ))}
-
-        {/* ── crosshair target ── */}
-        <g transform={`translate(${CROSS.x} ${CROSS.y}) scale(1.15)`} className="px-cross">
-          <path d="M-34 0H34M0-34V34" />
-          <rect x="-17" y="-17" width="34" height="34" />
-          <rect x="-26" y="-26" width="52" height="52" opacity=".55" />
-          <rect x="-7" y="-7" width="14" height="14" />
-          <rect x="-3" y="-3" width="6" height="6" className="px-solid px-core" />
-        </g>
-
-      </svg>
+    <div className="lp-diagram" aria-label="Two satellites in crossed three-dimensional orbits exchanging a bidirectional optical communication link">
+      <Suspense fallback={null}>
+        <OrbitalPair3D />
+      </Suspense>
     </div>
   );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return <p className="lp-section-label"><span aria-hidden="true" />{children}</p>;
 }
 
 export function LandingPage() {
@@ -240,12 +185,6 @@ export function LandingPage() {
             <CrosshairMark compact />
             <span>ASTERIA <small>v1.0.0</small></span>
           </Link>
-          <nav className="lp-links" aria-label="Primary navigation">
-            <a href="#home" className="lp-link lp-link--active">[ HOME ]</a>
-            <a href="#technology" className="lp-link">[ TECHNOLOGY ]</a>
-            <a href="#mission" className="lp-link">[ MISSION ]</a>
-            <a href="#about" className="lp-link">[ ABOUT ]</a>
-          </nav>
           <button className="lp-launch-btn" onClick={launch}>LAUNCH SYSTEM <Chevron /></button>
         </div>
       </header>
@@ -263,38 +202,6 @@ export function LandingPage() {
               <button className="lp-primary-btn" onClick={launch}>LAUNCH SYSTEM <Chevron /></button>
             </div>
           </div>
-        </section>
-
-        <section id="technology" className="lp-overview-section">
-          <div className="lp-section-heading">
-            <SectionLabel>01 / TECHNOLOGY</SectionLabel>
-            <h2>OPTICAL LINK<br /><em>ACQUISITION.</em></h2>
-          </div>
-          <div className="lp-overview-copy">
-            <p>A virtual optical tracking environment built to simulate target acquisition, camera alignment, and closed-loop correction before a physical link is deployed.</p>
-            <div className="lp-telemetry-list">
-              <span>DETECTION <b>AI-ASSISTED</b></span>
-              <span>PREDICTION <b>KALMAN FILTER</b></span>
-              <span>CONTROL <b>VIRTUAL PAN-TILT</b></span>
-            </div>
-          </div>
-        </section>
-
-        <section id="mission" className="lp-pipeline-section">
-          <SectionLabel>02 / MISSION SEQUENCE</SectionLabel>
-          <div className="lp-pipeline" role="list" aria-label="Mission sequence">
-            {['ENVIRONMENT', 'CAMERA', 'DETECTION', 'TRACKING', 'ANALYTICS'].map((stage, index) => (
-              <div className="lp-pipeline-stage" role="listitem" key={stage}>
-                <span>0{index + 1}</span><strong>{stage}</strong><i aria-hidden="true">→</i>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="about" className="lp-access-section">
-          <CrosshairMark />
-          <div><SectionLabel>03 / SYSTEM READY</SectionLabel><h2>RUN THE MISSION<span className="lp-cursor">_</span></h2></div>
-          <button className="lp-primary-btn" onClick={launch}>ENTER CONTROL <Chevron /></button>
         </section>
       </main>
     </div>

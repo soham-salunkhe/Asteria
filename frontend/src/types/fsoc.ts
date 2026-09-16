@@ -328,6 +328,10 @@ export interface TelemetryFrame {
   video_frame_jpeg?: string | null;
   pid_output: PIDOutput;
 
+  /** Operator manual camera hold — auto-tracking suspended while true */
+  manual_hold?: boolean;
+  manual_hold_remaining?: number;
+
   disturbance: DisturbanceState;
 
   metrics: FrameMetrics;

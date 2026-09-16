@@ -112,7 +112,14 @@ function useSimulationState() {
         const sessionId = frame.tracking_session?.id;
         if (sessionId !== undefined && sessionId < latestTrackingSessionId.current) return;
         if (sessionId !== undefined) latestTrackingSessionId.current = sessionId;
-        setLatest(frame);
+        // Slim manual snapshots carry fresh camera/hold state but no
+        // target/detection fields — merge over the last full frame so
+        // other pages never lose their data when a snapshot lands.
+        setLatest(prev => (
+          prev && !('target' in (frame as object))
+            ? { ...prev, ...frame } as TelemetryFrame
+            : frame
+        ));
         setStatusOverride(null);
         // Reconcile the authoritative disturbance mirror with the backend
         // echo. No-op when identical (avoids extra renders at 30 fps).

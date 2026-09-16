@@ -108,7 +108,7 @@ body {
 
 .sidenav-divider { height: 1px; background: var(--border); margin: 4px 0; }
 
-.sidenav-list { list-style: none; padding: 4px 0; flex: 1; overflow-y: auto; }
+.sidenav-list { list-style: none; padding: 4px 0; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 .sidenav-item {
   display: flex; align-items: center; gap: 10px;
@@ -138,7 +138,7 @@ body {
   border-top: 1px solid var(--border);
   margin-top: 4px; padding-top: 10px;
 }
-.sidenav-spacer { flex: 1; }
+.sidenav-spacer { display: none; }
 
 .sidenav-user {
   display: flex; align-items: center; gap: 10px;
@@ -494,28 +494,42 @@ body {
 
 /* ── Camera Control ──────────────────────────────────────── */
 .page-camera { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-.camera-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.camera-body { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .camera-control-col {
-  width: 240px; flex-shrink: 0; padding: 16px;
-  border-right: 1px solid var(--border); overflow-y: auto;
+  width: 240px; flex-shrink: 0; min-width: 0; padding: 16px;
+  border-right: 1px solid var(--border); overflow-y: auto; overflow-x: hidden;
   display: flex; flex-direction: column; gap: 12px;
+  box-sizing: border-box;
 }
-.camera-charts-col { flex: 1; min-width: 0; padding: 16px; overflow-y: auto; }
+.camera-charts-col { flex: 1 1 auto; min-width: 0; padding: 16px; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; }
 .camera-pid-col {
-  width: 280px; flex-shrink: 0; padding: 16px;
-  border-left: 1px solid var(--border); overflow-y: auto;
+  width: 280px; flex-shrink: 0; min-width: 0; padding: 16px;
+  border-left: 1px solid var(--border); overflow-y: auto; overflow-x: hidden;
+  box-sizing: border-box;
 }
 .camera-sep { height: 1px; background: var(--border); margin: 4px 0; }
 
-.cam-control-block { display: flex; flex-direction: column; gap: 4px; }
-.cam-axis-header { display: flex; align-items: baseline; gap: 6px; }
-.cam-axis-label { font-family: var(--mono); font-size: 10px; color: var(--cyan); letter-spacing: 0.06em; }
-.cam-axis-range { font-family: var(--mono); font-size: 9px; color: var(--text-3); }
-.cam-axis-current { font-family: var(--mono); font-size: 10px; color: var(--text-2); margin-left: auto; }
-.cam-slider-track { display: flex; align-items: center; gap: 6px; }
+.cam-control-block { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cam-axis-header { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.cam-axis-label { font-family: var(--mono); font-size: 10px; color: var(--cyan); letter-spacing: 0.06em; flex-shrink: 0; }
+.cam-axis-range { font-family: var(--mono); font-size: 9px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cam-axis-current { font-family: var(--mono); font-size: 10px; color: var(--text-2); margin-left: auto; flex-shrink: 0; }
+.cam-slider-track { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .cam-slider-tick  { font-family: var(--mono); font-size: 9px; color: var(--text-3); flex-shrink: 0; }
-.cam-slider       { flex: 1; accent-color: var(--cyan); }
+.cam-slider       { flex: 1 1 auto; min-width: 0; max-width: 100%; width: 100%; accent-color: var(--cyan); }
 .cam-slider-val   { font-family: var(--mono); font-size: 12px; color: var(--cyan); text-align: center; }
+.cam-error { font-family: var(--mono); font-size: 10px; color: var(--red); line-height: 1.4; word-break: break-word; }
+.cam-status-line { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 9px; color: var(--text-3); letter-spacing: 0.06em; }
+.cam-echo { font-family: var(--mono); font-size: 9px; line-height: 1.6; letter-spacing: 0.04em; padding: 6px 8px; border: 1px solid var(--border-2); word-break: break-word; }
+.cam-echo--waiting { color: var(--amber); border-color: var(--amber); }
+.cam-echo--ok { color: var(--green); border-color: var(--green); }
+.cam-echo--stale { color: var(--red); border-color: var(--red); }
+.cam-hold-badge {
+  margin-left: auto;
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em;
+  color: var(--bg); background: var(--amber);
+  padding: 3px 8px; border-radius: 2px; white-space: nowrap;
+}
 
 .cam-dpad { display: flex; flex-direction: column; align-items: center; gap: 3px; margin: 6px 0; }
 .cam-dpad-middle { display: flex; gap: 3px; align-items: center; }
@@ -539,15 +553,23 @@ body {
 .chart-title { font-family: var(--mono); font-size: 9px; color: var(--text-3); letter-spacing: 0.06em; margin-bottom: 8px; }
 .mt-4 { margin-top: 12px; }
 
-.pid-block { background: var(--bg-1); border: 1px solid var(--border); padding: 12px 14px; margin-bottom: 12px; border-radius: 2px; }
+.pid-block { background: var(--bg-1); border: 1px solid var(--border); padding: 12px 14px; margin-bottom: 12px; border-radius: 2px; min-width: 0; max-width: 100%; overflow: hidden; box-sizing: border-box; }
 .pid-title { font-family: var(--mono); font-size: 9px; color: var(--text-3); letter-spacing: 0.1em; margin-bottom: 12px; }
-.pid-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.pid-label { font-family: var(--mono); font-size: 9px; color: var(--text-2); width: 130px; flex-shrink: 0; }
-.pid-slider { flex: 1; accent-color: var(--cyan); }
-.pid-val { font-family: var(--mono); font-size: 10px; color: var(--cyan); width: 50px; text-align: right; }
+.pid-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-width: 0; max-width: 100%; }
+.pid-label { font-family: var(--mono); font-size: 9px; color: var(--text-2); width: 104px; flex: 0 0 104px; line-height: 1.5; white-space: normal; overflow-wrap: break-word; }
+.pid-slider { flex: 1 1 auto; min-width: 0; max-width: 100%; width: 100%; accent-color: var(--cyan); }
+.pid-val { font-family: var(--mono); font-size: 10px; color: var(--cyan); width: 46px; flex: 0 0 46px; text-align: right; white-space: nowrap; }
 .pid-apply-btn { width: 100%; margin-top: 8px; }
 
-.pid-output-block { background: var(--bg-1); border: 1px solid var(--border); padding: 12px 14px; border-radius: 2px; }
+.pid-output-block { background: var(--bg-1); border: 1px solid var(--border); padding: 12px 14px; border-radius: 2px; min-width: 0; max-width: 100%; overflow: hidden; box-sizing: border-box; }
+
+/* Narrow windows: stack the 3 columns instead of clipping the PID panel */
+@media (max-width: 1100px) {
+  .camera-body { flex-wrap: wrap; overflow-y: auto; overflow-x: hidden; }
+  .camera-control-col { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
+  .camera-charts-col { flex: 1 1 100%; min-width: 0; }
+  .camera-pid-col { width: 100%; border-left: 0; border-top: 1px solid var(--border); }
+}
 .pid-out-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(30,46,46,0.4); }
 .pid-out-label { font-family: var(--mono); font-size: 9px; color: var(--text-3); }
 .pid-out-val   { font-family: var(--mono); font-size: 10px; color: var(--text); }

@@ -131,6 +131,19 @@ class Camera:
         self._pan_rate = dpan / dt if dt > 0 else 0.0
         self._tilt_rate = dtilt / dt if dt > 0 else 0.0
 
+    def set_angles(self, pan: float, tilt: float) -> None:
+        """Absolute positioning for operator manual control.
+
+        Unlike apply_correction, this places the gimbal exactly at the
+        commanded angles and zeroes the rate estimates so the next
+        feedforward step does not inherit a huge phantom velocity from
+        a large manual jump (dpan/dt).
+        """
+        self._pan = max(-self.PAN_LIMIT, min(self.PAN_LIMIT, float(pan)))
+        self._tilt = max(-self.TILT_LIMIT, min(self.TILT_LIMIT, float(tilt)))
+        self._pan_rate = 0.0
+        self._tilt_rate = 0.0
+
     def reset(self) -> None:
         self._pan = 0.0
         self._tilt = 0.0

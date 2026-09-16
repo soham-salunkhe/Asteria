@@ -58,12 +58,23 @@ export function CameraFeed({
 
   const newestSession = useRef<string | null>(null);
   const renderedIndex = useRef(-1);
+  // Single reused JPEG decoder: one Image element for the whole session.
+  // Per-frame `new Image()` caused GC churn + queued stale decodes at 30
+  // fps; reusing cancels the in-flight decode so we always show latest.
+  const decoderRef = useRef<HTMLImageElement | null>(null);
+  const pendingRef = useRef<{
+    sessionId: string;
+    frameIndex: number;
+    frame: TelemetryFrame;
+    jpeg: string;
+  } | null>(null);
 
   // Sync uploaded video frames
   useEffect(() => {
     if (frame?.source !== 'video_input') {
       newestSession.current = null;
       renderedIndex.current = -1;
+      pendingRef.current = null;
       setRenderedVideo(null);
       return;
     }
@@ -71,18 +82,26 @@ export function CameraFeed({
     if (newestSession.current !== sessionId) {
       newestSession.current = sessionId;
       renderedIndex.current = -1;
+      pendingRef.current = null;
       setRenderedVideo(null);
     }
     const frameIndex = frame.frame_index ?? frame.frame_id ?? -1;
     if (!frame.video_frame_jpeg || frameIndex < 0) return;
+    if (frameIndex < renderedIndex.current) return;
 
-    const image = new Image();
-    image.onload = () => {
-      if (newestSession.current !== sessionId || frameIndex < renderedIndex.current) return;
-      renderedIndex.current = frameIndex;
-      setRenderedVideo({ sessionId, frameIndex, frame, image });
-    };
-    image.src = `data:image/jpeg;base64,${frame.video_frame_jpeg}`;
+    if (!decoderRef.current) {
+      const img = new Image();
+      img.onload = () => {
+        const p = pendingRef.current;
+        if (!p || newestSession.current !== p.sessionId || p.frameIndex < renderedIndex.current) return;
+        renderedIndex.current = p.frameIndex;
+        pendingRef.current = null;
+        setRenderedVideo({ sessionId: p.sessionId, frameIndex: p.frameIndex, frame: p.frame, image: img });
+      };
+      decoderRef.current = img;
+    }
+    pendingRef.current = { sessionId, frameIndex, frame, jpeg: frame.video_frame_jpeg };
+    decoderRef.current.src = `data:image/jpeg;base64,${frame.video_frame_jpeg}`;
   }, [frame]);
 
   useEffect(() => {

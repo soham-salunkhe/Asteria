@@ -1025,14 +1025,18 @@ function VirtualFsocRig({
 function TrajectoryLine({ history, visible }: { history: TelemetryFrame[]; visible: boolean }) {
   const points = useMemo(
     () =>
-      history.slice(-120).map(
-        (f) =>
-          [
-            SAT_A_POSITION[0] + f.target.position.x * WORLD_SCALE,
-            SAT_A_POSITION[1] + f.target.position.y * WORLD_SCALE,
-            SAT_A_POSITION[2] + f.target.position.z * WORLD_SCALE,
-          ] as V3,
-      ),
+      history.slice(-120).flatMap((f) => {
+        // Skip target-less frames (e.g. partial snapshots): one malformed
+        // entry must never throw here — it unmounts the whole app.
+        const p = f.target?.position;
+        if (typeof p?.x !== 'number' || typeof p?.y !== 'number' || typeof p?.z !== 'number') return [];
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) return [];
+        return [[
+          SAT_A_POSITION[0] + p.x * WORLD_SCALE,
+          SAT_A_POSITION[1] + p.y * WORLD_SCALE,
+          SAT_A_POSITION[2] + p.z * WORLD_SCALE,
+        ] as V3];
+      }),
     [history],
   );
   if (!visible || points.length < 2) return null;

@@ -198,8 +198,8 @@ export function DisturbancesPage() {
                 <Tooltip
                   contentStyle={{ background: '#0d1013', border: '1px solid #3a464d', fontSize: 11, borderRadius: 0 }}
                 />
-                <Line type="monotone" dataKey="error"       stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Angular Error (°)" />
-                <Line type="monotone" dataKey="disturbance" stroke="#8d9195" dot={false} strokeWidth={1}   name="Disturbance ×5" />
+                <Line isAnimationActive={false} type="monotone" dataKey="error"       stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Angular Error (°)" />
+                <Line isAnimationActive={false} type="monotone" dataKey="disturbance" stroke="#8d9195" dot={false} strokeWidth={1}   name="Disturbance ×5" />
               </LineChart>
             </ResponsiveContainer>
           </div>

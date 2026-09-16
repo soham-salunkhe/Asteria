@@ -235,6 +235,13 @@ class SimulationEngine:
         # Broadcast callback — set by WebSocket handler
         self._broadcast: Optional[Callable[[dict], Awaitable[None]]] = None
 
+        # Manual camera hold: operator pan/tilt commands suspend the
+        # auto-tracking loop (PID + search sweep) until this wall-clock
+        # timestamp. Without it every manual move is overwritten by the
+        # next 30 Hz loop frame, so sliders appear dead.
+        self._manual_hold_until: float = 0.0
+        self._manual_hold_s: float = 8.0
+
     # ── Public API ────────────────────────────────────────────
 
     def set_broadcast(self, fn: Callable[[dict], Awaitable[None]]) -> None:
@@ -675,14 +682,139 @@ class SimulationEngine:
                          f'KALMAN UPDATED — Q={kc.process_noise_q} '
                          f'R={kc.measurement_noise_r} P0={kc.initial_covariance}')
 
-    def update_camera_angles(self, pan: float, tilt: float) -> None:
-        """Direct camera control (from CameraControl page)."""
-        dt = 1.0 / max(self._camera.config.fps, 1.0)
-        self._camera.apply_correction(
-            pan - self._camera.pan,
-            tilt - self._camera.tilt,
-            dt,
-        )
+    def update_camera_angles(self, pan: float, tilt: float) -> dict:
+        """Direct camera control (from CameraControl page).
+
+        Places the gimbal at the absolute commanded angles and holds
+        auto-tracking off for a few seconds so the move is visible in
+        telemetry instead of being overwritten by the next loop frame.
+        Works in every sim state (running/paused/idle/stopped) — when
+        the main loop is not broadcasting, an immediate snapshot is
+        pushed so the UI reflects the move at once.
+        """
+        try:
+            pan_f = max(-180.0, min(180.0, float(pan)))
+        except (TypeError, ValueError):
+            pan_f = self._camera.pan
+        try:
+            tilt_f = max(-89.0, min(89.0, float(tilt)))
+        except (TypeError, ValueError):
+            tilt_f = self._camera.tilt
+        self._camera.set_angles(pan_f, tilt_f)
+        # Prevent PID windup jump when auto-tracking resumes.
+        try:
+            self._pid.reset()
+        except Exception:
+            pass
+        self._manual_hold_until = time.time() + self._manual_hold_s
+        self._search_t = 0.0
+        self._search_pan0 = pan_f
+        self._search_tilt0 = tilt_f
+        self._schedule_manual_snapshot()
+        return {
+            'success': True,
+            'pan': round(self._camera.pan, 4),
+            'tilt': round(self._camera.tilt, 4),
+            'manual_hold_until': self._manual_hold_until,
+            'sim_status': self.status,
+        }
+
+    def _schedule_manual_snapshot(self) -> None:
+        """Push one immediate telemetry snapshot with the manual angles.
+
+        Needed when paused/idle/stopped where _loop is not broadcasting,
+        otherwise the Camera page keeps showing frozen values.
+        """
+        if not self._broadcast:
+            return
+        try:
+            loop = asyncio.get_event_loop()
+        except Exception:
+            return
+        if not loop.is_running():
+            return
+        try:
+            loop.create_task(self._send_manual_snapshot())
+        except Exception:
+            pass
+
+    async def _send_manual_snapshot(self) -> None:
+        """Full-shaped live snapshot so manual moves reflect instantly.
+
+        MUST carry the same keys as loop/stop telemetry (target, targets,
+        detection, disturbance, metrics, …). A slim frame once crashed the
+        Environment 3D view: TrajectoryLine reads f.target.position for
+        every history entry, so one target-less snapshot black-screened
+        the whole app on navigation.
+        """
+        if not self._broadcast:
+            return
+        try:
+            now = time.time()
+            target_snapshots = []
+            for target_id, target in self._targets.items():
+                link = self._target_links.get(target_id, {})
+                snapshot = target.state_dict(now)
+                snapshot['image_position'] = None
+                snapshot['is_primary'] = target is self._target
+                snapshot['entity'] = {
+                    'id': target_id, 'type': 'target',
+                    'beaconId': link.get('beacon_id'),
+                    'hostSatelliteId': link.get('satellite_id'),
+                }
+                snapshot['beacon'] = {
+                    'id': link.get('beacon_id'), 'type': 'beacon',
+                    'parentTargetId': target_id,
+                    'size_px': target.config.beacon_size_px,
+                    'shape': target.config.beacon_shape,
+                    'intensity': target.config.intensity,
+                }
+                target_snapshots.append(snapshot)
+            active_snapshot = next(
+                (snapshot for snapshot in target_snapshots if snapshot['is_primary']),
+                target_snapshots[0] if target_snapshots else None,
+            )
+            if active_snapshot is None:
+                # Registry empty (fresh boot): fall back to the live target
+                # so `target` is never null — the 3D trajectory line reads
+                # f.target.position for every frame and a null crashes it.
+                try:
+                    active_snapshot = self._target.state_dict(now)
+                    active_snapshot['image_position'] = None
+                    active_snapshot['is_primary'] = True
+                    target_snapshots = [active_snapshot]
+                except Exception:
+                    pass
+            telemetry = {
+                'type': 'telemetry',
+                'payload': {
+                    'timestamp': now,
+                    'frame_id': self._frame_id,
+                    'elapsed': round(self._elapsed, 3),
+                    'sim_status': self.status,
+                    'source': 'virtual',
+                    'target_state': self._target_state,
+                    'target': active_snapshot,
+                    'targets': target_snapshots,
+                    'tracking_session': self._active_tracking_session,
+                    'centroiding_error': {},
+                    'pixel_error': {},
+                    'target_offset': self._target_offset.as_dict(),
+                    'camera': self._camera.state_dict(now),
+                    'detection': None,
+                    'kalman': None,
+                    'angular_error': {'pan_error': None, 'tilt_error': None, 'total_error': None},
+                    'pid_output': {},
+                    'disturbance': {},
+                    'metrics': {},
+                    'manual_hold': True,
+                    'manual_hold_remaining': round(max(0.0, self._manual_hold_until - now), 2),
+                    'events': self._drain_events(),
+                },
+            }
+            await self._broadcast(telemetry)
+        except Exception:
+            pass
 
     def set_target_offset(self, x: float, y: float, z: float) -> None:
         """Operator-injected target shift (e.g. moving TARGET-01 in 3D).
@@ -1297,7 +1429,21 @@ class SimulationEngine:
             }
 
             # ── PID control / SEARCHING sweep ──────────────────
-            if mx is not None:
+            # Operator manual hold suspends ALL auto gimbal motion so a
+            # pan/tilt command stays where the user put it instead of
+            # being overwritten 33 ms later by the next loop frame.
+            manual_hold = time.time() < self._manual_hold_until
+            if manual_hold:
+                pid_out = self._pid.coast()
+                pid_out = {
+                    **pid_out,
+                    'pan_correction': 0.0,
+                    'tilt_correction': 0.0,
+                    'ff_pan_rate': 0.0,
+                    'ff_tilt_rate': 0.0,
+                    'manual_hold': True,
+                }
+            elif mx is not None:
                 pid_out = self._pid.update(pan_err, tilt_err, dt)
                 # Inertial-rate feedforward: current camera rate plus the
                 # Kalman-estimated image drift (both in deg/s). This removes
@@ -1464,6 +1610,8 @@ class SimulationEngine:
                         'total_error': round(total_err, 4) if total_err is not None else None,
                     },
                     'pid_output': pid_out,
+                    'manual_hold': bool(manual_hold),
+                    'manual_hold_remaining': round(max(0.0, self._manual_hold_until - now), 2) if manual_hold else 0.0,
                     'disturbance': dist_state,
                     'atmosphere': {
                         'mode': self._atmos_mode,

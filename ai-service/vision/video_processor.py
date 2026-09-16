@@ -137,6 +137,32 @@ class VideoProcessor:
     def _is_active(self, session_id: str) -> bool:
         return session_id == self._active_session_id
 
+    @staticmethod
+    def _encode_jpeg_sync(raw_frame, quality: int = 50) -> Optional[str]:
+        """Blocking JPEG encode — always run via asyncio.to_thread."""
+        try:
+            ok, buf = cv2.imencode(
+                '.jpg', raw_frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+            if ok:
+                return base64.b64encode(buf).decode('ascii')
+        except Exception:
+            pass
+        return None
+
+    async def _encode_jpeg(self, raw_frame, quality: int = 50) -> Optional[str]:
+        """Encode off the event loop so frame pacing + WS delivery stay exact.
+
+        cv2.imencode blocks ~5-15 ms; awaited inline it stalls every other
+        task (telemetry, WS) and makes video playback stutter. Same bytes,
+        same quality, every frame — just not on the loop thread.
+        """
+        try:
+            return await asyncio.to_thread(
+                VideoProcessor._encode_jpeg_sync, raw_frame, quality)
+        except Exception:
+            return None
+
     def _emit_event(self, level: str, message: str) -> None:
         self._events.append({
             'id': str(uuid.uuid4()),
@@ -590,16 +616,9 @@ class VideoProcessor:
                 frame_metrics = self._metrics.frame_metrics()
                 # Attach the ACTUAL processed video frame (JPEG, base64) so
                 # the UI shows the real input — never a synthetic starfield.
-                # Encoding is best-effort: telemetry must survive a failure.
-                video_jpeg: Optional[str] = None
-                try:
-                    ok, buf = cv2.imencode(
-                        '.jpg', raw_frame,
-                        [int(cv2.IMWRITE_JPEG_QUALITY), 50])
-                    if ok:
-                        video_jpeg = base64.b64encode(buf).decode('ascii')
-                except Exception:
-                    video_jpeg = None
+                # Encoding is best-effort and off-loop: telemetry must survive
+                # a failure and pacing must not stall on the encode.
+                video_jpeg = await self._encode_jpeg(raw_frame, 50)
                 telemetry = {
                     'type': 'telemetry',
                     'payload': {

@@ -99,9 +99,9 @@ export function AnalyticsPage() {
               <XAxis dataKey="t" tick={false} />
               <YAxis {...axisProps} />
               <Tooltip {...ttProps} />
-              <Line type="monotone" dataKey="error"   stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Total" />
-              <Line type="monotone" dataKey="panErr"  stroke="#d98618" dot={false} strokeWidth={1}   name="Pan" />
-              <Line type="monotone" dataKey="tiltErr" stroke="#8d9195" dot={false} strokeWidth={1}   name="Tilt" />
+              <Line isAnimationActive={false} type="monotone" dataKey="error"   stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Total" />
+              <Line isAnimationActive={false} type="monotone" dataKey="panErr"  stroke="#d98618" dot={false} strokeWidth={1}   name="Pan" />
+              <Line isAnimationActive={false} type="monotone" dataKey="tiltErr" stroke="#8d9195" dot={false} strokeWidth={1}   name="Tilt" />
               <ReferenceLine y={0.5} stroke="#8fa98f55" strokeDasharray="4 4" />
             </LineChart>
           </ResponsiveContainer>
@@ -114,8 +114,8 @@ export function AnalyticsPage() {
               <XAxis dataKey="t" tick={false} />
               <YAxis {...axisProps} />
               <Tooltip {...ttProps} />
-              <Line type="monotone" dataKey="fps"  stroke="#8fa98f" dot={false} strokeWidth={1.5} name="FPS" />
-              <Line type="monotone" dataKey="proc" stroke="#e39a32" dot={false} strokeWidth={1}   name="Proc (ms)" />
+              <Line isAnimationActive={false} type="monotone" dataKey="fps"  stroke="#8fa98f" dot={false} strokeWidth={1.5} name="FPS" />
+              <Line isAnimationActive={false} type="monotone" dataKey="proc" stroke="#e39a32" dot={false} strokeWidth={1}   name="Proc (ms)" />
             </LineChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -127,7 +127,7 @@ export function AnalyticsPage() {
               <XAxis dataKey="t" tick={false} />
               <YAxis {...axisProps} domain={[0, 100]} />
               <Tooltip {...ttProps} />
-              <Area
+              <Area isAnimationActive={false}
                 type="monotone" dataKey="conf" stroke="#d98618"
                 fill="#d9861822" strokeWidth={1.5} name="Confidence %" />
               <ReferenceLine y={90} stroke="#8fa98f55" strokeDasharray="4 4" />
@@ -142,7 +142,7 @@ export function AnalyticsPage() {
               <XAxis dataKey="t" tick={false} />
               <YAxis {...axisProps} domain={[0, 1.2]} ticks={[0, 1]} />
               <Tooltip {...ttProps} />
-              <Area
+              <Area isAnimationActive={false}
                 type="stepAfter" dataKey="locked" stroke="#8fa98f"
                 fill="#8fa98f22" strokeWidth={1.5} name="Locked" />
             </AreaChart>
@@ -168,7 +168,7 @@ export function AnalyticsPage() {
                   );
                 }}
               />
-              <Scatter data={scatterData} fill="#d98618" opacity={0.55} />
+              <Scatter isAnimationActive={false} data={scatterData} fill="#d98618" opacity={0.55} />
               <ReferenceLine x={0} stroke="#3a464d55" />
               <ReferenceLine y={0} stroke="#3a464d55" />
             </ScatterChart>
@@ -197,7 +197,7 @@ export function AnalyticsPage() {
                   <XAxis dataKey="bin" tick={{ fill: '#626a6d', fontSize: 9 }} />
                   <YAxis {...axisProps} />
                   <Tooltip {...ttProps} />
-                  <Area type="monotone" dataKey="count" stroke="#d98618" fill="#d9861822" strokeWidth={1.5} name="Count" />
+                  <Area isAnimationActive={false} type="monotone" dataKey="count" stroke="#d98618" fill="#d9861822" strokeWidth={1.5} name="Count" />
                 </AreaChart>
               </ResponsiveContainer>
             );

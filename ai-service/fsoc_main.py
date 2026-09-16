@@ -257,9 +257,17 @@ def update_atmosphere(req: AtmosphereRequest):
 
 
 @app.post('/api/simulation/camera')
-def update_camera(req: CameraAngleRequest):
-    engine.update_camera_angles(req.pan, req.tilt)
-    return {'success': True}
+async def update_camera(req: CameraAngleRequest):
+    result = engine.update_camera_angles(req.pan, req.tilt)
+    # MUST be awaited here in the main event loop. The old sync endpoint
+    # tried to schedule the snapshot via get_event_loop() from a worker
+    # thread (no running loop) so it silently never sent — sliders moved
+    # locally while telemetry stayed frozen at 0°.
+    try:
+        await engine._send_manual_snapshot()
+    except Exception:
+        pass
+    return result if isinstance(result, dict) else {'success': True}
 
 
 @app.post('/api/simulation/target_offset')

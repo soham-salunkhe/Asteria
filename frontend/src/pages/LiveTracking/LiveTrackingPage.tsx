@@ -323,7 +323,8 @@ export function LiveTrackingPage() {
                 width: `${progressPct}%`,
                 height: '100%',
                 background: f?.target_state === 'LOCKED' ? '#52c41a' : 'var(--cyan)',
-                transition: 'width 0.1s linear',
+                // No CSS transition: width already steps every frame at
+                // stream rate; transitioning re-interpolates 30×/s.
               }}
             />
           </div>

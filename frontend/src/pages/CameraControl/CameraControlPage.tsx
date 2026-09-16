@@ -2,7 +2,7 @@
  * FSOC — Camera Control Page
  * Pan/tilt manual control + PID parameter tuning.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useSimulation } from '../../hooks/useSimulation';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -18,16 +18,67 @@ export function CameraControlPage() {
 
   const [pan,  setPan]  = useState(0);
   const [tilt, setTilt] = useState(0);
+  const [camError, setCamError] = useState<string | null>(null);
+  const [camBusy, setCamBusy] = useState(false);
+  // Command → echo tracking: proves every slider move reached the backend
+  // AND came back via telemetry. If the POST succeeds but no echo arrives,
+  // the backend is stale (ai-service not restarted) — say so explicitly
+  // instead of leaving the user staring at frozen 0.00° values.
+  const [lastCmd, setLastCmd] = useState<{ pan: number; tilt: number; at: number } | null>(null);
+  const [echoState, setEchoState] = useState<'idle' | 'waiting' | 'confirmed' | 'stale'>('idle');
+  // Sliders start at the LIVE gimbal position (not 0) and only diverge
+  // once the operator grabs them — otherwise the slider jumps from 0
+  // while the camera is e.g. at +40°, which looks broken.
+  const touchedPan = useRef(false);
+  const touchedTilt = useRef(false);
+
+  useEffect(() => {
+    if (!touchedPan.current && f?.camera.pan !== undefined) setPan(f.camera.pan);
+  }, [f?.camera.pan]);
+  useEffect(() => {
+    if (!touchedTilt.current && f?.camera.tilt !== undefined) setTilt(f.camera.tilt);
+  }, [f?.camera.tilt]);
+
+  // Live-apply: every slider / d-pad move is sent to the backend
+  // immediately. Previously these only updated local state and did
+  // nothing until APPLY was pressed, so dragging felt dead.
+  const sendCamera = useCallback(async (nextPan: number, nextTilt: number) => {
+    setCamBusy(true);
+    setCamError(null);
+    setEchoState('waiting');
+    try {
+      await sim.updateCamera(nextPan, nextTilt);
+      setLastCmd({ pan: nextPan, tilt: nextTilt, at: Date.now() });
+      setEchoState('waiting');
+    } catch (e) {
+      setCamError(e instanceof Error ? e.message : 'Camera update failed');
+      setEchoState('idle');
+    } finally {
+      setCamBusy(false);
+    }
+  }, [sim]);
+
+  const handlePanChange = useCallback((nextPan: number) => {
+    touchedPan.current = true;
+    setPan(nextPan);
+    void sendCamera(nextPan, tilt);
+  }, [tilt, sendCamera]);
+
+  const handleTiltChange = useCallback((nextTilt: number) => {
+    touchedTilt.current = true;
+    setTilt(nextTilt);
+    void sendCamera(pan, nextTilt);
+  }, [pan, sendCamera]);
+
+  const handleManualCamera = useCallback(async () => {
+    await sendCamera(pan, tilt);
+  }, [pan, tilt, sendCamera]);
 
   const [pid, setPid] = useState({
     kp: 0.8, ki: 0.05, kd: 0.3,
     max_angular_velocity: 15.0,
     settling_threshold: 0.5,
   });
-
-  const handleManualCamera = useCallback(async () => {
-    await sim.updateCamera(pan, tilt);
-  }, [pan, tilt, sim]);
 
   const handlePIDApply = useCallback(async () => {
     await sim.updatePID(pid);
@@ -45,6 +96,23 @@ export function CameraControlPage() {
   const currentPan  = f?.camera.pan  ?? 0;
   const currentTilt = f?.camera.tilt ?? 0;
 
+  // Echo confirmation: telemetry caught up with the last command.
+  useEffect(() => {
+    if (!lastCmd || echoState !== 'waiting') return;
+    if (Math.abs(currentPan - lastCmd.pan) < 0.6 && Math.abs(currentTilt - lastCmd.tilt) < 0.6) {
+      setEchoState('confirmed');
+    }
+  }, [currentPan, currentTilt, lastCmd, echoState]);
+
+  // Stale detection: POST ok but no telemetry echo within 2.5 s.
+  useEffect(() => {
+    if (!lastCmd || echoState !== 'waiting') return;
+    const id = setTimeout(() => {
+      setEchoState(prev => (prev === 'waiting' ? 'stale' : prev));
+    }, 2500);
+    return () => clearTimeout(id);
+  }, [lastCmd, echoState]);
+
   const normalize = (val: number, min: number, max: number) =>
     ((val - min) / (max - min)) * 100;
 
@@ -53,6 +121,11 @@ export function CameraControlPage() {
       <div className="page-header">
         <h2 className="page-title">Camera Control</h2>
         <span className="page-subtitle">Pan · Tilt · PID Configuration</span>
+        {f?.manual_hold && (
+          <span className="cam-hold-badge">
+            MANUAL HOLD{f?.manual_hold_remaining ? ` · ${f.manual_hold_remaining.toFixed(0)}s` : ''}
+          </span>
+        )}
       </div>
 
       <div className="camera-body">
@@ -72,7 +145,7 @@ export function CameraControlPage() {
                 type="range"
                 min={-180} max={180} step={0.1}
                 value={pan}
-                onChange={e => setPan(Number(e.target.value))}
+                onChange={e => handlePanChange(Number(e.target.value))}
                 className="cam-slider"
               />
               <span className="cam-slider-tick">+180°</span>
@@ -93,7 +166,7 @@ export function CameraControlPage() {
                 type="range"
                 min={-89} max={89} step={0.1}
                 value={tilt}
-                onChange={e => setTilt(Number(e.target.value))}
+                onChange={e => handleTiltChange(Number(e.target.value))}
                 className="cam-slider"
               />
               <span className="cam-slider-tick">+89°</span>
@@ -104,32 +177,53 @@ export function CameraControlPage() {
           {/* D-pad controls */}
           <div className="cam-dpad">
             <button className="cam-dpad-btn cam-dpad-up"
-              onClick={() => { const v = tilt + 1; setTilt(Math.min(89, v)); }}>
+              onClick={() => { touchedTilt.current = true; const v = Math.min(89, tilt + 1); setTilt(v); void sendCamera(pan, v); }}>
               ↑
             </button>
             <div className="cam-dpad-middle">
               <button className="cam-dpad-btn cam-dpad-left"
-                onClick={() => { const v = pan - 1; setPan(Math.max(-180, v)); }}>
+                onClick={() => { touchedPan.current = true; const v = Math.max(-180, pan - 1); setPan(v); void sendCamera(v, tilt); }}>
                 ←
               </button>
               <button className="cam-dpad-btn cam-dpad-center"
-                onClick={() => { setPan(0); setTilt(0); }}>
+                onClick={() => { touchedPan.current = true; touchedTilt.current = true; setPan(0); setTilt(0); void sendCamera(0, 0); }}>
                 ⊙
               </button>
               <button className="cam-dpad-btn cam-dpad-right"
-                onClick={() => { const v = pan + 1; setPan(Math.min(180, v)); }}>
+                onClick={() => { touchedPan.current = true; const v = Math.min(180, pan + 1); setPan(v); void sendCamera(v, tilt); }}>
                 →
               </button>
             </div>
             <button className="cam-dpad-btn cam-dpad-down"
-              onClick={() => { const v = tilt - 1; setTilt(Math.max(-89, v)); }}>
+              onClick={() => { touchedTilt.current = true; const v = Math.max(-89, tilt - 1); setTilt(v); void sendCamera(pan, v); }}>
               ↓
             </button>
           </div>
 
-          <button className="btn-primary cam-apply-btn" onClick={handleManualCamera}>
-            APPLY ANGLES
+          <button className="btn-primary cam-apply-btn" onClick={handleManualCamera} disabled={camBusy}>
+            {camBusy ? 'SENDING…' : 'APPLY ANGLES'}
           </button>
+          <div className="cam-status-line">
+            <span>SIM: {sim.simStatus.toUpperCase()}</span>
+            <span>WS: {sim.wsStatus.toUpperCase()}</span>
+          </div>
+          {echoState === 'waiting' && lastCmd && (
+            <div className="cam-echo cam-echo--waiting">
+              SENT {lastCmd.pan.toFixed(1)}° / {lastCmd.tilt.toFixed(1)}° … WAITING FOR BACKEND ECHO
+            </div>
+          )}
+          {echoState === 'confirmed' && lastCmd && (
+            <div className="cam-echo cam-echo--ok">
+              CONFIRMED {lastCmd.pan.toFixed(1)}° / {lastCmd.tilt.toFixed(1)}° — TELEMETRY + 3D UPDATED
+            </div>
+          )}
+          {echoState === 'stale' && (
+            <div className="cam-echo cam-echo--stale">
+              BACKEND DID NOT ECHO — RESTART AI-SERVICE: uvicorn fsoc_main:app --port 8000
+              {sim.wsStatus !== 'connected' && ' · WS DISCONNECTED, CHECK PROXY/BACKEND'}
+            </div>
+          )}
+          {camError && <div className="cam-error">{camError}</div>}
 
           <div className="camera-sep" />
 
@@ -143,6 +237,16 @@ export function CameraControlPage() {
                 <circle cx="0" cy="0" r="18" stroke="#242b30" strokeWidth="1" fill="none" />
                 <line x1="-55" y1="0" x2="55" y2="0" stroke="#242b30" strokeWidth="0.5" />
                 <line x1="0" y1="-55" x2="0" y2="55" stroke="#242b30" strokeWidth="0.5" />
+                {/* hollow = commanded (sliders), filled = confirmed (telemetry) */}
+                <circle
+                  cx={normalize(pan, -180, 180) / 100 * 110 - 55}
+                  cy={-(normalize(tilt, -90, 90) / 100 * 110 - 55)}
+                  r="7"
+                  fill="none"
+                  stroke="#626a6d"
+                  strokeWidth="1"
+                  strokeDasharray="3 2"
+                />
                 <circle
                   cx={normalize(currentPan, -180, 180) / 100 * 110 - 55}
                   cy={-(normalize(currentTilt, -90, 90) / 100 * 110 - 55)}
@@ -151,6 +255,7 @@ export function CameraControlPage() {
                 />
               </svg>
               <div className="cam-pos-labels">
+                <span>CMD: {pan.toFixed(1)}° / {tilt.toFixed(1)}°</span>
                 <span>PAN: {currentPan.toFixed(1)}°</span>
                 <span>TILT: {currentTilt.toFixed(1)}°</span>
               </div>
@@ -172,8 +277,8 @@ export function CameraControlPage() {
                   labelStyle={{ color: '#8d9195' }}
                 />
                 <Legend wrapperStyle={{ fontSize: 10, color: '#8d9195' }} />
-                <Line type="monotone" dataKey="pan"  stroke="#d98618" dot={false} strokeWidth={1.5} name="Pan" />
-                <Line type="monotone" dataKey="tilt" stroke="#8d9195" dot={false} strokeWidth={1.5} name="Tilt" />
+                <Line isAnimationActive={false} type="monotone" dataKey="pan"  stroke="#d98618" dot={false} strokeWidth={1.5} name="Pan" />
+                <Line isAnimationActive={false} type="monotone" dataKey="tilt" stroke="#8d9195" dot={false} strokeWidth={1.5} name="Tilt" />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -190,8 +295,8 @@ export function CameraControlPage() {
                   labelStyle={{ color: '#8d9195' }}
                 />
                 <Legend wrapperStyle={{ fontSize: 10, color: '#8d9195' }} />
-                <Line type="monotone" dataKey="panErr"  stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Pan Error" />
-                <Line type="monotone" dataKey="tiltErr" stroke="#8fa98f" dot={false} strokeWidth={1.5} name="Tilt Error" />
+                <Line isAnimationActive={false} type="monotone" dataKey="panErr"  stroke="#f0b35a" dot={false} strokeWidth={1.5} name="Pan Error" />
+                <Line isAnimationActive={false} type="monotone" dataKey="tiltErr" stroke="#8fa98f" dot={false} strokeWidth={1.5} name="Tilt Error" />
               </LineChart>
             </ResponsiveContainer>
           </div>

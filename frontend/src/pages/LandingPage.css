@@ -3,7 +3,7 @@
    Pure black + amber + gray. Every visual is SVG/CSS — no raster.
    ============================================================ */
 .lp-root {
-  --lp-bg: #0a0a0a;
+  --lp-bg: #000000;
   --lp-panel: #000000;
   --lp-amber: #e8a33d;
   --lp-amber-dim: #d99a3f;
@@ -15,9 +15,11 @@
   --lp-pixel: "Press Start 2P", "VT323", monospace;
   --lp-mono: "JetBrains Mono", "VT323", "Courier New", monospace;
   min-height: 100vh;
-  overflow: clip;
+  height: 100vh;
+  height: 100svh;
+  overflow: hidden;
   color: var(--lp-text);
-  background: var(--lp-bg);
+  background: #000000;
   font-family: var(--lp-mono);
   text-transform: uppercase;
   image-rendering: pixelated;
@@ -27,7 +29,7 @@
 .lp-root button, .lp-root a { font: inherit; text-transform: inherit; }
 .lp-root button { cursor: pointer; }
 .lp-root a { color: inherit; text-decoration: none; }
-.lp-root main { position: relative; }
+.lp-root main { position: relative; height: 100%; overflow: hidden; }
 
 /* CRT scanlines across whole page */
 .lp-scanlines {
@@ -53,7 +55,7 @@
   position: absolute;
   z-index: 50;
   top: 28px; right: 28px; left: 28px;
-  background: rgba(10, 10, 10, 0.88);
+  background: rgba(0, 0, 0, 0.88);
   border: 1px solid var(--lp-amber);
   box-shadow: 0 0 18px rgba(232, 163, 61, 0.12);
 }
@@ -61,6 +63,7 @@
   min-height: 62px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 24px;
   padding: 10px 28px;
   max-width: 1720px;
@@ -118,7 +121,7 @@
 .lp-primary-btn { min-width: 284px; }
 .lp-launch-btn:hover, .lp-primary-btn:hover {
   background: var(--lp-amber);
-  color: #0a0a0a;
+  color: #000000;
   box-shadow: 0 0 22px rgba(232, 163, 61, 0.55);
 }
 .lp-button-arrow { font-size: 18px; font-weight: 400; line-height: 0; }
@@ -127,10 +130,13 @@
 .lp-hero {
   position: relative;
   display: flex;
+  height: 100vh;
+  height: 100svh;
+  min-height: 100vh;
   min-height: 100svh;
   align-items: stretch;
   overflow: hidden;
-  background: var(--lp-bg);
+  background: #000000;
 }
 .lp-hero-inner {
   position: relative;
@@ -190,8 +196,7 @@
 }
 .lp-section-label > span { display: inline-block; width: 39px; height: 2px; background: var(--lp-amber); }
 
-/* ── right: vertical stacked words ── */
-/* full-bleed Earth foundation layer: bg → earth → trajectory → (text above) */
+/* ── right: binary orbital visualization (full-bleed, behind hero copy) ── */
 .lp-diagram { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .px-svg {
   display: block;
@@ -200,21 +205,14 @@
   image-rendering: pixelated;
   overflow: visible;
 }
-/* satellite artwork: pure-black image bg melts into the page */
-.px-photo { mix-blend-mode: screen; }
-/* zoomed-out earth leaves its left image edge mid-frame — melt it */
-.px-earth {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14%);
-  mask-image: linear-gradient(to right, transparent 0, #000 14%);
-}
 
-/* ── 3. PIXEL SATELLITE / BEAM / EARTH (SVG, crisp edges) ── */
+/* ── 3. BINARY ORBITAL PAIR / OPTICAL LINK (SVG, crisp edges) ── */
 .px-panel { fill: none; stroke: var(--lp-amber); stroke-width: 1.6; }
 .px-panel-frame { fill: rgba(232, 163, 61, 0.05); stroke: var(--lp-amber); stroke-width: 2.2; }
 .px-panel-fill { fill: rgba(232, 163, 61, 0.25); stroke: none; }
 .px-wire { stroke: var(--lp-amber); stroke-width: 1.6; fill: none; }
 .px-solid { fill: var(--lp-amber); stroke: none; }
-.px-body { fill: #0a0a0a; stroke: var(--lp-amber); stroke-width: 2; }
+.px-body { fill: #000000; stroke: var(--lp-amber); stroke-width: 2; }
 .px-top { fill: rgba(232, 163, 61, 0.16); stroke: var(--lp-amber); stroke-width: 1.6; }
 .px-side { fill: rgba(232, 163, 61, 0.07); stroke: var(--lp-amber); stroke-width: 1.6; }
 .px-lens { fill: none; stroke: var(--lp-amber); stroke-width: 2; }
@@ -327,7 +325,7 @@
   .lp-nav-inner { padding: 10px 14px; }
   .lp-links { display: none; }
   .lp-launch-btn { margin-left: auto; }
-  .lp-hero { min-height: auto; }
+  .lp-hero { height: 100vh; height: 100svh; min-height: 100vh; min-height: 100svh; overflow: hidden; }
   .lp-hero-inner { grid-template-columns: 1fr; gap: 0; padding: 120px 30px 110px; }
   .lp-hero-copy { padding-bottom: 10px; }
   .lp-overview-section { gap: 54px; padding: 88px 0; }
@@ -345,8 +343,6 @@
   .lp-hero-inner { padding: 104px 20px 96px; }
   .lp-subtitle { margin: 24px 0 0; font-size: 10px; }
   .lp-primary-btn { min-width: 220px; min-height: 40px; font-size: 10px; }
-  /* mobile: keep the horizon, park the spacecraft elements for readability */
-  .px-photo, .px-beam, .px-packet, .px-cross, .px-traj { display: none; }
   .lp-hero-footer { right: 18px; bottom: 16px; left: 18px; gap: 12px; font-size: 8px; }
   .lp-hero-footer > span:first-child { max-width: 230px; }
   .lp-footer-id { display: none; }
@@ -365,5 +361,5 @@
 @media (prefers-reduced-motion: reduce) {
   .lp-cursor { animation: none; }
   .px-beam { animation: none; }
-  .px-core, .px-twinkle, .px-rim-breathe { animation: none; }
+  .px-core, .px-twinkle, .px-rim-breathe, .px-lockring { animation: none; }
 }
