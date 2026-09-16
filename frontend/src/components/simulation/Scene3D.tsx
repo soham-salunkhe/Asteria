@@ -460,104 +460,36 @@ function Moon() {
 }
 
 function Earth({ brightness }: { brightness: number }) {
-  // /earth.png is a gold night-render, so it serves as the dim emissive
-  // night layer (washed out on the day side, glowing tracery on the dark
-  // side). Loaded asynchronously without triggering React Suspense.
-  const [earthTexture, setEarthTexture] = useState<THREE.Texture | null>(null);
-  const dayTexture = useMemo(() => makeEarthDayTexture(), []);
-
-  useEffect(() => {
-    let active = true;
-    const loader = new THREE.TextureLoader();
-    loader.load(
-      '/earth.png',
-      (tex) => {
-        if (!active) return;
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.anisotropy = 4;
-        tex.needsUpdate = true;
-        setEarthTexture(tex);
-      },
-      undefined,
-      (err) => {
-        console.warn('Could not load /earth.png, using procedural fallback', err);
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const clouds = useMemo(() => makeCloudTexture(), []);
-  const cloudRef = useRef<THREE.Mesh>(null!);
   const earthRef = useRef<THREE.Mesh>(null!);
 
-  // Atmosphere Fresnel shader material
-  const atmosMat = useMemo(() => new THREE.ShaderMaterial({
-    vertexShader: atmosphereVertexShader,
-    fragmentShader: atmosphereFragmentShader,
-    uniforms: {
-      uColor: { value: new THREE.Color('#4da6d9') },
-      uIntensity: { value: 1.2 },
-    },
-    transparent: true,
-    side: THREE.BackSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  }), []);
-
   useFrame((_, dt) => {
-    if (cloudRef.current) cloudRef.current.rotation.y += dt * 0.015;
     if (earthRef.current) earthRef.current.rotation.y += dt * 0.005;
   });
 
   return (
     <group position={EARTH_POSITION}>
-      {/* Surface — opaque day texture; local /earth.png asset glows dimly
-          as the night-side layer only (washed out where sunlit) */}
+      {/* Surface — simple yellow/amber planet */}
       <mesh ref={earthRef}>
         <sphereGeometry args={[EARTH_RADIUS, 64, 48]} />
         <meshStandardMaterial
-          map={dayTexture}
-          color="#ffffff"
-          roughness={0.82}
-          metalness={0.02}
-          emissiveMap={earthTexture ?? undefined}
-          emissive="#ffcf90"
-          emissiveIntensity={0.22 * brightness}
+          color="#d4a855"
+          roughness={0.85}
+          metalness={0.05}
+          emissive="#d4a855"
+          emissiveIntensity={0.12 * brightness}
         />
       </mesh>
-      {/* Cloud layer — independently rotating */}
-      <mesh ref={cloudRef} scale={1.008}>
-        <sphereGeometry args={[EARTH_RADIUS, 64, 48]} />
-        <meshStandardMaterial
-          map={clouds ?? undefined}
-          transparent
-          opacity={0.35}
-          depthWrite={false}
-          roughness={1}
-        />
-      </mesh>
-      {/* Fresnel atmosphere — thin blue rim */}
-      <mesh scale={1.04} material={atmosMat}>
-        <sphereGeometry args={[EARTH_RADIUS, 48, 32]} />
-      </mesh>
-      {/* Outer atmospheric haze — very subtle */}
+
+      {/* Atmosphere glow */}
       <mesh scale={1.10}>
         <sphereGeometry args={[EARTH_RADIUS, 48, 32]} />
         <meshBasicMaterial
-          color="#3a8ab8"
+          color="#e8b86a"
           transparent
-          opacity={0.04 * brightness}
+          opacity={0.12}
           side={THREE.BackSide}
-          blending={THREE.AdditiveBlending}
           depthWrite={false}
         />
-      </mesh>
-      {/* ground-station marker */}
-      <mesh position={[0, 0, EARTH_RADIUS * 0.99]}>
-        <sphereGeometry args={[0.018, 12, 8]} />
-        <meshBasicMaterial color="#e8f4ee" transparent opacity={0.9} />
       </mesh>
     </group>
   );
@@ -1536,8 +1468,12 @@ function SceneContent(props: {
   onOrbitEnabled: (v: boolean) => void;
   resolveWorldPos: (id: string | null) => V3 | null;
   showDebugVectors?: boolean;
+  simStatus?: string;
 }) {
   const { frame, history, settings, objects, selectedId, gizmoMode } = props;
+  
+  // Don't render simulation entities when idle/stopped - use parent's simStatus
+  const isSimRunning = props.simStatus === 'running' || props.simStatus === 'paused';
 
   const targetPosition: V3 = [
     SAT_A_POSITION[0] + finiteOr(frame?.target?.position?.x, 120, 'target.position.x') * WORLD_SCALE,
@@ -1721,6 +1657,7 @@ function SceneContent(props: {
       ))}
 
       {/* virtual tracking camera + FOV (telemetry-driven) */}
+      {isSimRunning && (
       <VirtualFsocRig
         frame={frame}
         cameraId={activeCameraId}
@@ -1750,10 +1687,11 @@ function SceneContent(props: {
         reportPosition={reportPosition}
         onSelect={props.onSelect}
       />
+      )}
       <TrajectoryLine history={history} visible={settings.trajectory} />
 
       {/* user-added non-target visualisation objects (e.g. additional satellites) */}
-      {objects.filter((def) => def.kind !== 'target').map((def) => (
+      {isSimRunning && objects.filter((def) => def.kind !== 'target').map((def) => (
         <LocalObject
           key={def.id}
           def={def}
@@ -1826,9 +1764,11 @@ interface Props {
   minimalChrome?: boolean;
   /** Receives the external control surface (called only when it changes). */
   onTwinApi?: (api: TwinApi) => void;
+  /** Simulation status to control entity visibility */
+  simStatus?: string;
 }
 
-export default function Scene3D({ frame, history, minimalChrome = false, onTwinApi }: Props) {
+export default function Scene3D({ frame, history, minimalChrome = false, onTwinApi, simStatus }: Props) {
   // Phase 4: Single authoritative viewport ref
   const threeViewportRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -2310,7 +2250,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
         ),
       );
     } catch (e) {
-      console.error('Failed to track target', e);
+      alert(`TRACK FAILED\n${e instanceof Error ? e.message : e}`);
     } finally {
       setSwitching(false);
     }
@@ -2360,6 +2300,15 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
   const trackingOwnsCamera = ['ACQUIRING', 'TRACKING', 'LOCKED', 'REACQUIRING', 'SEARCHING'].includes(tstate);
   const fallbackEntityIds = ['SAT-01', 'FSOC-CAM-01', liveTargetId, liveBeaconId, ...objects.flatMap((o) => o.kind === 'target' ? [o.id, o.beaconId] : [o.id, o.cameraId])];
   const entityListIds = Array.from(new Set(entityGraph.length ? entityGraph.map((entity) => entity.id) : fallbackEntityIds));
+
+  // Labels follow the run: hidden when there is no active run (idle /
+  // stopped / ended) and restored automatically on start. The Labels
+  // toggle keeps the operator's preference — this only gates what the
+  // scene actually renders. Embeds that don't pass simStatus keep the
+  // plain toggle behavior.
+  const labelsEffective = simStatus == null
+    ? settings.labels
+    : settings.labels && simStatus !== 'idle' && simStatus !== 'stopped';
 
   // Publish the external control surface for minimal-chrome embeds.
   // Change-detected so the parent only re-renders when selection, camera
@@ -2423,7 +2372,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
         <SceneContent
           frame={frame}
           history={history}
-          settings={settings}
+          settings={{ ...settings, labels: labelsEffective }}
           objects={objects}
           selectedId={selectedId}
           gizmoMode={gizmoMode}
@@ -2440,6 +2389,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
           onRotate={(id, rot) => updateObject(id, { rotation: rot })}
           onOrbitEnabled={setOrbitEnabled}
           showDebugVectors={showFsocDebug}
+          simStatus={simStatus}
         />
       </Canvas>
 
@@ -3089,7 +3039,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
                         )
                       );
                     } catch (e) {
-                      console.error('Failed to switch target', e);
+                      alert(`TRACK FAILED\n${e instanceof Error ? e.message : e}`);
                     } finally {
                       setSwitching(false);
                     }
@@ -3305,6 +3255,6 @@ function FsocDbgRow({
   );
 }
 
-export function SimulationViewport({ frame, history, minimalChrome, onTwinApi }: Props) {
-  return <Scene3D frame={frame} history={history} minimalChrome={minimalChrome} onTwinApi={onTwinApi} />;
+export function SimulationViewport({ frame, history, minimalChrome, onTwinApi, simStatus }: Props) {
+  return <Scene3D frame={frame} history={history} minimalChrome={minimalChrome} onTwinApi={onTwinApi} simStatus={simStatus} />;
 }

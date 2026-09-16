@@ -48,9 +48,9 @@ const DEFAULT_TARGET: TargetForm = {
   start_z: 350,
   beaconShape: 'square',
   beaconSize: 10,
-  fov_h: 4,
-  fov_v: 3,
-  max_rate: 5,
+  fov_h: 4,    // Fixed PS169 value
+  fov_v: 3,    // Fixed PS169 value
+  max_rate: 5, // Fixed PS169 value
 };
 
 // Closed-loop test presets (clean conditions: configure, then START CUSTOM)
@@ -219,7 +219,9 @@ export function MissionControlPage() {
   const handleStartDemo = async () => {
     setStarting(true);
     try {
-      await sim.startDemo();
+      // The whole CONFIGURE panel applies to START DEMO too (demo_mode
+      // stays on, so the scripted phase timeline still runs).
+      await sim.startDemo(buildConfig());
     } finally {
       setStarting(false);
     }
@@ -228,23 +230,15 @@ export function MissionControlPage() {
   const handleStartCustom = async () => {
     setStarting(true);
     try {
-      // PS169 startup validation — fail loudly, never silently correct.
-      const cfgErrors = validatePs169Config({
-        width: PS169_CONFIG.camera.width,
-        height: PS169_CONFIG.camera.height,
-        fovH: target.fov_h,
-        fovV: target.fov_v,
-      });
-      if (target.fov_h !== 4 || target.fov_v !== 3) {
-        cfgErrors.push(
-          `FSOC optical FOV must be 4°x3°, got ${target.fov_h}°x${target.fov_v}°`,
-        );
-      }
-      if (cfgErrors.length > 0) {
-        alert(`PARAMETER VALIDATION FAILED\n${cfgErrors.join('\n')}`);
-        return;
-      }
-      await sim.startCustom(buildConfig());
+      // PS169 configuration is now fixed - no user validation needed
+      // Always use PS169 defaults: 640×480, 4°×3°, 30 Hz, 5°/s
+      const config = buildConfig();
+      // Force PS169 values regardless of target state
+      config.camera.fov_h = 4;
+      config.camera.fov_v = 3;
+      config.pid.max_angular_velocity = 5;
+      
+      await sim.startCustom(config);
     } finally {
       setStarting(false);
     }
@@ -286,13 +280,6 @@ export function MissionControlPage() {
 
       {/* ── Mission header ─────────────────────────────────── */}
       <header className="mc2-header">
-        <div className="mc2-mission-id">
-          <span className="mc2-mid">PS169</span>
-          <span className="mc2-mid-sep">|</span>
-          <span className="mc2-mid">FSOC COARSE ALIGNMENT</span>
-          <span className="mc2-mid-sep">|</span>
-          <span className="mc2-mid">FSOC-DEMO-042</span>
-        </div>
         <div className="mc2-header-right">
           <span className="mc2-clock" title={f && num(f.elapsed) ? `Mission elapsed T+${num(f.elapsed)}s` : 'No active run'}>
             {utcStr}{f && num(f.elapsed) ? `  ·  T+${num(f.elapsed)}s` : ''}
@@ -466,15 +453,6 @@ export function MissionControlPage() {
               <CfgSlider label="Beacon Size (px)" value={target.beaconSize} min={5} max={20} step={1} onChange={v => setT('beaconSize', v)} />
             </div>
 
-            {/* Virtual FSOC camera (PS169 defaults: 640×480, 4°×3°, 30 Hz, 5°/s) */}
-            <div className="mc-cfg-group">
-              <div className="mc-cfg-label">FSOC VIRTUAL CAMERA</div>
-            </div>
-            <div className="mc-cfg-params-grid">
-              <CfgSlider label="FOV-H (°)" value={target.fov_h} min={2} max={12} step={0.5} onChange={v => setT('fov_h', v)} />
-              <CfgSlider label="FOV-V (°)" value={target.fov_v} min={2} max={9} step={0.5} onChange={v => setT('fov_v', v)} />
-              <CfgSlider label="Max Rate (°/s)" value={target.max_rate} min={1} max={15} step={0.5} onChange={v => setT('max_rate', v)} />
-            </div>
             <div className="mc-cfg-summary">
               <span className="mc-cfg-sum-item">ID: <b>{target.id}</b></span>
               <span className="mc-cfg-sum-sep">·</span>
@@ -483,6 +461,8 @@ export function MissionControlPage() {
               <span className="mc-cfg-sum-item">TRAJ: <b>{target.trajectory.toUpperCase()}</b></span>
               <span className="mc-cfg-sum-sep">·</span>
               <span className="mc-cfg-sum-item">POS: <b>({target.start_x}, {target.start_y}, {target.start_z})</b></span>
+              <span className="mc-cfg-sum-sep">·</span>
+              <span className="mc-cfg-sum-item">FSOC: <b>640×480 · 4°×3° · 30 Hz · 5°/s</b></span>
             </div>
             {videoFile && !videoUploading && (
               <div className="mc-cfg-summary">
@@ -575,7 +555,7 @@ export function MissionControlPage() {
 
             <div className="mc2-viz" ref={vizRef}>
               {viewMode === '3d' ? (
-                <SimulationViewport frame={f} history={sim.history} minimalChrome onTwinApi={setTwin} />
+                <SimulationViewport frame={f} history={sim.history} minimalChrome onTwinApi={setTwin} simStatus={sim.simStatus} />
               ) : (
                 <CameraFeed
                   frame={f}

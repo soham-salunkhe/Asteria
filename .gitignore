@@ -46,5 +46,30 @@ npm-debug.log*
 *.mov
 *.zip
 
+# Electron packaged output (built locally, never committed)
+*.exe
+*.dll
+*.pak
+*.dat
+*.bin
+*.ico
+*.pak
+locales/
+resources/
+LICENSE.electron.txt
+LICENSES.chromium.html
+chrome_*.pak
+snapshot_blob.bin
+v8_context_snapshot.bin
+vk_swiftshader*
+vulkan-1.dll
+icudtl.dat
+d3dcompiler_47.dll
+ffmpeg.dll
+libEGL.dll
+libGLESv2.dll
+ASTERIA_Assessment_*.pdf
+"Uninstall ASTERIA.exe"
+
 # Python virtual env
 env/

@@ -613,6 +613,24 @@ class SimulationEngine:
         self._emit_event('info', 'DEMO ENDED — RUNTIME SCENARIO CLEARED')
         await self._send_stop_telemetry(scenario_reset=True)
 
+    async def clear_all_entities(self) -> None:
+        """Clear ALL entities including defaults. Leave scene completely empty."""
+        await self.stop()
+        self._target = None
+        self._camera = None
+        self._targets = {}
+        self._cameras = {}
+        self._satellites = {}
+        self._target_links = {}
+        self._secondary_target = None
+        self._active_tracking_session = None
+        self._tracking_session_id = 0
+        self._run_id = None
+        self._stopped = False
+        self._reset_state()
+        self._emit_event('info', 'ALL ENTITIES CLEARED — SCENE EMPTY')
+        await self._send_stop_telemetry(scenario_reset=True)
+
     def _install_default_entity_graph(self) -> None:
         """Install fresh default objects; no mutable runtime objects are reused."""
         self._targets[DEFAULT_TARGET.id] = self._target
@@ -889,7 +907,7 @@ class SimulationEngine:
         beacon_offset: Optional[dict] = None,
         satellite_id: Optional[str] = None,
         camera_id: Optional[str] = None,
-    ) -> None:
+    ) -> dict:
         """Switch coarse-alignment tracking objective to target_id.
         Re-initializes the active tracked target, resets ALL per-target state
         (including missed_frames so we never enter LOST on the first tick),
@@ -898,6 +916,14 @@ class SimulationEngine:
         init_pos = position if isinstance(position, dict) else {}
         init_vel = velocity if isinstance(velocity, dict) else {}
         bo = beacon_offset if isinstance(beacon_offset, dict) else {}
+
+        # Namespace guard: never silently create a target whose id collides
+        # with an existing satellite, camera or beacon (e.g. tracking a
+        # beacon id would otherwise spawn a target NAMED like the beacon,
+        # duplicating labels across the scene).
+        if target_id not in self._targets and target_id in self._entity_ids():
+            return {'success': False,
+                    'error': f'Refusing to track {target_id}: name collides with an existing entity'}
 
         traj_map = {
             'static': 'static',
@@ -1062,6 +1088,7 @@ class SimulationEngine:
             )
         self._emit_event('info', f'TRACK TARGET — {target_id}')
         self._emit_event('info', f'ACQUISITION STARTED — SEARCHING FOR {target_id}')
+        return {'success': True, 'target_id': target_id}
 
     def move_target(self, target_id: str, position: Optional[dict]) -> dict:
         """Manually relocate one registered target (operator gizmo/panel move).

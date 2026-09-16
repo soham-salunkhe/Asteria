@@ -217,6 +217,21 @@ async def end_demo():
     return {'success': True, 'status': engine.status}
 
 
+@app.post('/api/simulation/clear_all')
+async def clear_all():
+    """Clear ALL entities including defaults. Leave scene completely empty."""
+    await engine.clear_all_entities()
+    return {'success': True, 'status': engine.status}
+
+
+@app.post('/api/simulation/reset_positions')
+async def reset_positions():
+    """Reset all target positions to their initial configured positions."""
+    for target in engine._targets.values():
+        target.reset()
+    return {'success': True, 'message': 'All target positions reset to initial values'}
+
+
 @app.get('/api/simulation/status')
 def get_status():
     return {
@@ -281,7 +296,7 @@ def update_target_offset(req: TargetOffsetRequest):
 @app.post('/api/simulation/switch_target')
 def switch_target(req: SwitchTargetRequest):
     """Switch coarse-alignment tracking objective to another target entity."""
-    engine.switch_target(
+    result = engine.switch_target(
         target_id=req.target_id,
         position=req.position,
         velocity=req.velocity,
@@ -290,7 +305,9 @@ def switch_target(req: SwitchTargetRequest):
         satellite_id=req.satellite_id,
         camera_id=req.camera_id,
     )
-    return {'success': True, 'target_id': req.target_id}
+    if not result.get('success'):
+        raise HTTPException(400, result.get('error', 'Unknown target'))
+    return result
 
 
 @app.post('/api/simulation/reacquire')

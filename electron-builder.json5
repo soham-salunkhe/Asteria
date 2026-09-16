@@ -51,6 +51,14 @@
     "installerIcon": "resources/icon.ico",
     "uninstallerIcon": "resources/icon.ico",
     "installerHeaderIcon": "resources/icon.ico",
-    "deleteAppDataOnUninstall": false
+    "deleteAppDataOnUninstall": false,
+    "displayLanguageSelector": false,
+    "perMachine": false,
+    "runAfterFinish": true,
+    "menuCategory": false,
+    "allowElevation": true,
+    "include": "resources/installer.nsh",
+    "warningsAsErrors": false,
+    "packElevateHelper": true
   }
 }

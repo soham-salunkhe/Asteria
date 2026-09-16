@@ -254,11 +254,15 @@ class Target:
         off = self._pattern_offset(self._t)
         self._origin = Vec3(x - off.x, y - off.y, z)
         self._position = Vec3(x, y, z)
-        self.config.initial_position = Vec3(self._origin.x,
-                                            self._origin.y,
-                                            self._origin.z)
+        # NOTE: config.initial_position is deliberately left untouched — it
+        # is the configured scenario start. reset() restores from it, so a
+        # gizmo drag must never rewrite it (otherwise reset/respawn would
+        # return to the drop point instead of the initial position).
 
     def reset(self) -> None:
+        self._origin = Vec3(self.config.initial_position.x,
+                            self.config.initial_position.y,
+                            self.config.initial_position.z)
         self._position = Vec3(self.config.initial_position.x,
                               self.config.initial_position.y,
                               self.config.initial_position.z)

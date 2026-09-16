@@ -18,7 +18,8 @@ export function SettingsPage() {
   const sim = useSimulation();
   const [applying, setApplying] = useState(false);
   const [applyMsg, setApplyMsg] = useState<string | null>(null);
-  const [settings, setSettings] = useState({
+  
+  const DEFAULT_SETTINGS = {
     // Simulation
     fps: 30,
     resolution: '640x480',
@@ -52,7 +53,9 @@ export function SettingsPage() {
     // Performance
     historyMaxFrames: 600,
     telemetrySampleEvery: 5,
-  });
+  };
+
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
 
   const set = (key: string, val: string | number | boolean) =>
     setSettings(s => ({ ...s, [key]: val }));
@@ -98,6 +101,17 @@ export function SettingsPage() {
           }}
         >
           {applying ? 'APPLYING…' : 'APPLY TO SIMULATION'}
+        </button>
+        <button
+          className="mc-btn-custom"
+          style={{ marginLeft: 8, pointerEvents: 'auto', background: '#626a6d' }}
+          title="Reset all settings to default values"
+          onClick={() => {
+            setSettings(DEFAULT_SETTINGS);
+            setApplyMsg('Settings reset to defaults. Click APPLY TO SIMULATION to push to engine.');
+          }}
+        >
+          RESET TO DEFAULTS
         </button>
         {applyMsg && (
           <span className="page-subtitle" style={{ marginLeft: 8 }}>{applyMsg}</span>

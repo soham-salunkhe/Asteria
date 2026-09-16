@@ -293,7 +293,7 @@ export function LiveTrackingPage() {
               debugMode={debugMode}
             />
           ) : (
-            <SimulationViewport frame={f} history={sim.history} />
+            <SimulationViewport frame={f} history={sim.history} simStatus={sim.simStatus} />
           )}
         </div>
 

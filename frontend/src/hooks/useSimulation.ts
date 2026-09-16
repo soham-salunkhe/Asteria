@@ -177,8 +177,10 @@ function useSimulationState() {
     }
   }, []);
 
-  const startDemo = useCallback(async () => {
-    await fsocApi.startSimulation(undefined, true);
+  const startDemo = useCallback(async (config?: unknown) => {
+    // Optional panel config rides along (demo scripted phases still run);
+    // omitted (e.g. Live Tracking quick DEMO) keeps backend defaults.
+    await fsocApi.startSimulation(config, true);
     setStatusOverride(null); // fresh telemetry will confirm 'running'
   }, []);
 

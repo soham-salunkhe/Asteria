@@ -1,6 +1,5 @@
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { NavLink, Link } from 'react-router-dom';
 import type { WsStatus } from '../../hooks/useSimulation';
 
 interface NavItem {
@@ -27,9 +26,6 @@ interface Props {
 }
 
 export function SideNav({ wsStatus, simStatus }: Props) {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-
   const wsColor = wsStatus === 'connected' ? '#8fa98f' :
                   wsStatus === 'error'     ? '#a86a5a' : '#626a6d';
 
@@ -39,13 +35,13 @@ export function SideNav({ wsStatus, simStatus }: Props) {
   return (
     <nav className="sidenav">
       {/* Logo */}
-      <div className="sidenav-logo">
+      <Link to="/" className="sidenav-logo" style={{ textDecoration: 'none', cursor: 'pointer' }}>
         <LogoMark />
         <div className="sidenav-logo-text">
           <span className="sidenav-product">ASTERIA</span>
           <span className="sidenav-sub">FSOC MISSION CONTROL</span>
         </div>
-      </div>
+      </Link>
 
       {/* Status bar */}
       <div className="sidenav-status-row">
@@ -78,39 +74,13 @@ export function SideNav({ wsStatus, simStatus }: Props) {
         ))}
       </ul>
 
-      {/* Copilot */}
-      <NavLink
-        to="/copilot"
-        className={({ isActive }) =>
-          `sidenav-item sidenav-item--copilot${isActive ? ' sidenav-item--active' : ''}`
-        }
-      >
-        <span className="sidenav-icon"><IconCopilot /></span>
-        <span className="sidenav-label">Gemini Copilot</span>
-        <span className="sidenav-badge">AI</span>
-      </NavLink>
-
       <div className="sidenav-divider" />
 
       {/* User */}
       <div className="sidenav-user">
-        {user?.photoURL ? (
-          <img src={user.photoURL} alt="avatar" className="sidenav-avatar" />
-        ) : (
-          <div className="sidenav-avatar-fallback">
-            {user?.displayName?.[0] ?? user?.email?.[0] ?? 'U'}
-          </div>
-        )}
+        <div className="sidenav-avatar-fallback">D</div>
         <div className="sidenav-user-info">
-          <span className="sidenav-user-name">
-            {user?.displayName ?? user?.email?.split('@')[0] ?? 'Operator'}
-          </span>
-          <button
-            className="sidenav-logout"
-            onClick={() => { logout().then(() => navigate('/login')); }}
-          >
-            Sign Out
-          </button>
+          <span className="sidenav-user-name">Demo Operator</span>
         </div>
       </div>
     </nav>

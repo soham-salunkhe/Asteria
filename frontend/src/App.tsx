@@ -39,9 +39,8 @@ const isDesktopApp = typeof window !== 'undefined' && (
 const AppRouter = isDesktopApp ? HashRouter : BrowserRouter;
 
 // ── Route config ──────────────────────────────────────────────
-// In the desktop app with demo mode, skip the landing/auth pages
-// and boot directly into Mission Control.
-const skipLanding = isDesktopApp;
+// Show landing page for all users (desktop and web)
+const skipLanding = false;
 
 // ── Auth guard ────────────────────────────────────────────────
 // Redirects unauthenticated users to /login with ?redirect=
@@ -92,34 +91,18 @@ function AppShell() {
 // ── Root ──────────────────────────────────────────────────────
 
 function AppRoutes() {
-  // Desktop app (Electron): skip landing & auth pages, go straight to shell.
-  if (skipLanding) {
-    return (
-      <Routes>
-        <Route path="/*" element={<AppShell />} />
-      </Routes>
-    );
-  }
-
   return (
     <Routes>
       {/* ── Public landing page ─────────────────────────────── */}
       <Route path="/"              element={<LandingPage />} />
 
-      {/* ── Auth pages (no sidebar) ─────────────────────────── */}
+      {/* ── Auth pages (no sidebar) - keeping for future use ─── */}
       <Route path="/login"         element={<LoginPage />} />
       <Route path="/signup"        element={<SignUpPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-      {/* ── Protected virtual environment (LOGIN REQUIRED) ──── */}
-      <Route
-        path="/*"
-        element={
-          <RequireAuth>
-            <AppShell />
-          </RequireAuth>
-        }
-      />
+      {/* ── Virtual environment (Demo mode - no auth required) ── */}
+      <Route path="/*" element={<AppShell />} />
     </Routes>
   );
 }
