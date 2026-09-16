@@ -6,7 +6,8 @@
  */
 import React from 'react';
 import {
-  BrowserRouter as Router,
+  BrowserRouter,
+  HashRouter,
   Routes,
   Route,
   Navigate,
@@ -29,6 +30,19 @@ import { ReportsPage }        from './pages/Reports/ReportsPage';
 import { SettingsPage }       from './pages/Settings/SettingsPage';
 import { CopilotPage }        from './pages/Copilot/CopilotPage';
 
+// ── Router Selector ───────────────────────────────────────────
+// Electron uses file:// protocol where HashRouter avoids pathname collision.
+const isDesktopApp = typeof window !== 'undefined' && (
+  window.location.protocol === 'file:' ||
+  !!(window as any).asteriaDesktop
+);
+const AppRouter = isDesktopApp ? HashRouter : BrowserRouter;
+
+// ── Route config ──────────────────────────────────────────────
+// In the desktop app with demo mode, skip the landing/auth pages
+// and boot directly into Mission Control.
+const skipLanding = isDesktopApp;
+
 // ── Auth guard ────────────────────────────────────────────────
 // Redirects unauthenticated users to /login with ?redirect=
 // so they return to the intended page after signing in.
@@ -37,7 +51,12 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isLoggedIn, authLoading } = useAuth();
   if (authLoading) return <div className="fsoc-loading">Authenticating…</div>;
   if (!isLoggedIn) {
-    const redirect = window.location.pathname + window.location.search;
+    const rawRedirect = window.location.hash
+      ? window.location.hash.replace(/^#/, '')
+      : window.location.pathname;
+    const redirect = (rawRedirect && !rawRedirect.includes(':') && !rawRedirect.includes('.html'))
+      ? rawRedirect
+      : '/mission';
     return <Navigate to={`/login?redirect=${encodeURIComponent(redirect)}`} replace />;
   }
   return <>{children}</>;
@@ -73,6 +92,15 @@ function AppShell() {
 // ── Root ──────────────────────────────────────────────────────
 
 function AppRoutes() {
+  // Desktop app (Electron): skip landing & auth pages, go straight to shell.
+  if (skipLanding) {
+    return (
+      <Routes>
+        <Route path="/*" element={<AppShell />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
       {/* ── Public landing page ─────────────────────────────── */}
@@ -100,9 +128,9 @@ export function App() {
   return (
     <AuthProvider>
       <SimulationProvider>
-        <Router>
+        <AppRouter>
           <AppRoutes />
-        </Router>
+        </AppRouter>
       </SimulationProvider>
     </AuthProvider>
   );

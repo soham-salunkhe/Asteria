@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.asteria.fsoc",
+  "productName": "ASTERIA",
+  "copyright": "Copyright © 2026 ASTERIA Team (PS169)",
+  "directories": {
+    "output": "release/${productName}-${version}-${arch}",
+    "buildResources": "resources"
+  },
+  "files": [
+    "dist-electron/**/*",
+    "frontend/dist/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "ai-service/dist/tracking-engine",
+      "to": "bin/tracking-engine",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources",
+      "to": "resources",
+      "filter": ["icon.ico", "icon.png"]
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "resources/icon.ico",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "signAndEditExecutable": false
+  },
+  "portable": {
+    "artifactName": "${productName}-Portable-${version}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": "always",
+    "createStartMenuShortcut": true,
+    "shortcutName": "ASTERIA — FSOC Mission Control",
+    "installerIcon": "resources/icon.ico",
+    "uninstallerIcon": "resources/icon.ico",
+    "installerHeaderIcon": "resources/icon.ico",
+    "deleteAppDataOnUninstall": false
+  }
+}

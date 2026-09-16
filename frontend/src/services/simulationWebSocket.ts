@@ -5,8 +5,18 @@
  */
 import type { TelemetryFrame } from '../types/fsoc';
 
-const FSOC_WS = import.meta.env.VITE_FSOC_WS_URL
-  ?? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/simulation`;
+export function getWsUrl(): string {
+  if (typeof window !== 'undefined' && (window as any).asteriaDesktop?.config?.wsUrl) {
+    return (window as any).asteriaDesktop.config.wsUrl;
+  }
+  if (import.meta.env.VITE_FSOC_WS_URL) {
+    return import.meta.env.VITE_FSOC_WS_URL;
+  }
+  if (typeof window !== 'undefined' && window.location.protocol === 'file:') {
+    return 'ws://127.0.0.1:8000/ws/simulation';
+  }
+  return `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws'}://${typeof window !== 'undefined' ? window.location.host : 'localhost:8000'}/ws/simulation`;
+}
 
 type FrameCallback = (frame: TelemetryFrame) => void;
 type StatusCallback = (status: 'connected' | 'disconnected' | 'error') => void;
@@ -53,7 +63,7 @@ class SimulationWebSocket {
     this._isReconnecting = true;
 
     try {
-      this._ws = new WebSocket(FSOC_WS);
+      this._ws = new WebSocket(getWsUrl());
 
       this._ws.onopen = () => {
         this._connected = true;

@@ -1,0 +1,32 @@
+{
+  "name": "asteria-fsoc",
+  "version": "1.0.0",
+  "description": "AI-Based Virtual Camera Tracking System for Coarse Alignment of Mobile FSOC Terminals",
+  "author": "ASTERIA Team (PS169)",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:electron": "tsc -p electron",
+    "build": "npm run build:frontend && npm run build:electron",
+    "electron:dev": "npm run build:electron && electron dist-electron/main.js --dev",
+    "electron:start": "npm run build:electron && electron dist-electron/main.js",
+    "dist": "npm run build && electron-builder --win nsis",
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "dist:all": "npm run build && electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3"
+  }
+}

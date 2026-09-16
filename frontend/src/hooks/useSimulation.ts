@@ -133,10 +133,15 @@ function useSimulationState() {
         // state would choke the tab during video runs.
         const { video_frame_jpeg: _drop, ...slim } = frame;
         historyBuffer.current.push(slim as TelemetryFrame);
-        // Collect events
+        // Collect events — deduplicate by ID so reconnects never produce
+        // duplicate keys in EventLog (backend re-emits buffered events on
+        // every new WebSocket connection / uvicorn reload).
         if (frame.events?.length) {
           setEvents(prev => {
-            const combined = [...prev, ...frame.events];
+            const seen = new Set(prev.map(e => e.id));
+            const fresh = frame.events.filter(e => !seen.has(e.id));
+            if (!fresh.length) return prev;
+            const combined = [...prev, ...fresh];
             return combined.slice(-MAX_EVENTS);
           });
         }

@@ -4,11 +4,18 @@
  * In production, set VITE_FSOC_API_URL to the deployed backend URL.
  */
 
-const FSOC_API = import.meta.env.VITE_FSOC_API_URL ?? '';
+export function getApiBase(): string {
+  if (typeof window !== 'undefined' && (window as any).asteriaDesktop?.config?.apiUrl) {
+    return (window as any).asteriaDesktop.config.apiUrl;
+  }
+  return import.meta.env.VITE_FSOC_API_URL ?? '';
+}
+
 import type { SimulationEntity, TrackingSession } from '../types/fsoc';
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${FSOC_API}${path}`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
@@ -29,7 +36,8 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${FSOC_API}${path}`);
+  const base = getApiBase();
+  const res = await fetch(`${base}${path}`);
   if (!res.ok) throw new Error(`${path} → HTTP ${res.status}`);
   return res.json();
 }
@@ -130,7 +138,7 @@ export const fsocApi = {
 
   // Reports (download URLs)
   reportUrl: (runId: string, format: 'csv' | 'json' | 'pdf') =>
-    `${FSOC_API}/api/reports/${runId}/${format}`,
+    `${getApiBase()}/api/reports/${runId}/${format}`,
 
   // Health
   health: () => get('/api/health'),

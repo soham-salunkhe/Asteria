@@ -13,6 +13,7 @@ import type { TwinApi, TwinViewName } from '../../components/simulation/Scene3D'
 import { PS169_CONFIG, validatePs169Config } from '../../config/ps169';
 import { EventLog } from '../../components/telemetry/EventLog';
 import type { TargetState } from '../../types/fsoc';
+import { getApiBase } from '../../services/fsocApi';
 import './MissionControlPage.css';
 
 // ── Target configuration form state ───────────────────────────
@@ -261,7 +262,8 @@ export function MissionControlPage() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('http://localhost:8000/api/simulation/upload-video', {
+      const base = getApiBase() || 'http://localhost:8000';
+      const res = await fetch(`${base}/api/simulation/upload-video`, {
         method: 'POST',
         body: formData,
       });

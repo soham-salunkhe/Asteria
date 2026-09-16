@@ -9,7 +9,9 @@ import uuid
 from pathlib import Path
 from typing import Optional, Any
 
-DB_PATH = Path(__file__).parent.parent / 'fsoc_pat.db'
+import os
+_data_dir = os.environ.get('ASTERIA_DATA_DIR')
+DB_PATH = Path(_data_dir) / 'fsoc_pat.db' if _data_dir else Path(__file__).parent.parent / 'fsoc_pat.db'
 
 
 def get_conn() -> sqlite3.Connection:
