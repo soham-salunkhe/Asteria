@@ -47,22 +47,10 @@ function OrbitRing({ a, b, rotation, opacity = 0.55, ticks = false }: {
     line.current?.computeLineDistances();
   }, [geo]);
   
-  // Pixelated dash pattern - using on/off segments like the text
-  const dashPattern = useMemo(() => {
-    // Creates a pixelated/dotted effect: 2 units on, 3 units off
-    return [0.08, 0.12];
-  }, []);
-  
   return (
     <group rotation={rotation}>
       <lineLoop ref={line} geometry={geo}>
-        <lineDashedMaterial 
-          color={AMBER} 
-          dashSize={dashPattern[0]} 
-          gapSize={dashPattern[1]} 
-          transparent 
-          opacity={opacity} 
-        />
+        <lineBasicMaterial color={AMBER} transparent opacity={opacity} />
       </lineLoop>
     </group>
   );
@@ -281,9 +269,9 @@ function Rig({ reduced }: { reduced: boolean }) {
   }, []);
 
   // Mirror orbits: slightly elliptical, opposite directions
-  const A = { a: 1.8, b: 1.3, w: -0.35 };
-  const B = { a: 1.8, b: 1.3, w: 0.35, phase: Math.PI };
-  const ORIGIN = useMemo(() => new THREE.Vector3(2.8, 0.15, 0), []);
+  const A = { a: 1.55, b: 1.1, w: -0.35 };
+  const B = { a: 1.55, b: 1.1, w: 0.35, phase: Math.PI };
+  const ORIGIN = useMemo(() => new THREE.Vector3(2.6, 0.15, 0), []);
 
   useFrame((state, rawDt) => {
     const dt = Math.min(rawDt, 0.05);
@@ -326,15 +314,11 @@ function Rig({ reduced }: { reduced: boolean }) {
 
   return (
     <group>
-      <group position={ORIGIN}>
-        <OrbitRing a={A.a} b={A.b} rotation={[-0.35, 0.12, 0.42]} opacity={0.6} />
-        <OrbitRing a={B.a} b={B.b} rotation={[0.35, -0.12, -0.42]} opacity={0.45} />
-      </group>
       <group ref={satA}>
-        <Satellite scale={0.65} wing={1.05} dishSide={1} termRef={termA} />
+        <Satellite scale={0.48} wing={1.05} dishSide={1} termRef={termA} />
       </group>
       <group ref={satB}>
-        <Satellite scale={0.55} wing={0.85} dishSide={-1} termRef={termB} />
+        <Satellite scale={0.4} wing={0.85} dishSide={-1} termRef={termB} />
       </group>
       <mesh ref={beamGlow} geometry={beamGeo}>
         <meshBasicMaterial color={AMBER} transparent opacity={0.16} depthWrite={false} />
