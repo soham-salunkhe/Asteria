@@ -276,6 +276,95 @@ def generate_pdf(run_id: str) -> bytes:
     ]))
     content.append(spec_table)
 
+    # Lock-retention diagnostics: partition the eligible population exactly
+    # (locked + unlocked == eligible) and name every unlocked frame with its
+    # reason.  Nothing here can manufacture a PASS — the rule matches the
+    # engine (>95%), and a shortfall stays FAIL with its frames listed.
+    content.append(Spacer(1, 6))
+    content.append(section('4. Lock Retention Diagnostics'))
+    _elig = run.get('eligible_frames')
+    _locked = run.get('locked_frames')
+    _unlocked = run.get('unlocked_frames')
+    _missed_ep = run.get('missed_in_episode')
+    if _elig is None or _locked is None:
+        # Runs recorded before retention accounting existed.
+        _elig_n = _locked_n = _unlocked_n = None
+    else:
+        _elig_n = _elig or 0
+        _locked_n = _locked or 0
+        _unlocked_n = _unlocked or 0
+    _ret_n = (_locked_n / _elig_n * 100.0) if _elig_n else None
+    content.append(kv_table([
+        ('Eligible Frames',  str(_elig_n) if _elig_n is not None else '— (legacy run)'),
+        ('Locked Frames',    str(_locked_n) if _locked_n is not None else '— (legacy run)'),
+        ('Unlocked Frames',  str(_unlocked_n) if _unlocked_n is not None else '— (legacy run)'),
+        ('Missed In-Episode', str(_missed_ep) if _missed_ep is not None else '— (legacy run)'),
+        ('Retention',        f"{_ret_n:.1f}%" if _ret_n is not None else '—',
+        ),
+        ('Requirement',      '≥ 95%'),
+        ('Result',           ('PASS' if (_ret_n is not None and _ret_n >= 95.0)
+                              else 'FAIL' if _ret_n is not None else '—')),
+    ]))
+
+    # Per-frame loss table, recomputed from stored samples with the same
+    # episode rule the engine uses (episode arms at first LOCKED, clears
+    # on LOST; only measured TRACKING/LOCKED frames are eligible).
+    _loss_rows = []
+    if samples:
+        _ep_active = False
+        for _s in samples:
+            _st = _s.get('target_state')
+            if _st == 'LOCKED':
+                _ep_active = True
+            elif _st == 'LOST':
+                _ep_active = False
+                _loss_rows.append((
+                    _s.get('frame_id'), _s.get('elapsed'),
+                    _s.get('pixel_error_total'), 'STATE_LOST'))
+            if _ep_active and _st == 'TRACKING':
+                _reason = _s.get('lock_lost_reason')
+                if _reason in (None, '', 'NONE'):
+                    _reason = 'ERROR_ABOVE_GATE'
+                _loss_rows.append((
+                    _s.get('frame_id'), _s.get('elapsed'),
+                    _s.get('pixel_error_total'), _reason))
+    if _loss_rows:
+        _MAX_LOSS_ROWS = 30
+        _shown = _loss_rows[:_MAX_LOSS_ROWS]
+        _loss_data = [[Paragraph('Frame', mono_style), Paragraph('Time (s)', mono_style),
+                       Paragraph('Error (px)', mono_style), Paragraph('Reason', mono_style)]]
+        for _fid, _el, _px, _rs in _shown:
+            _loss_data.append([
+                Paragraph(str(_fid), body_style),
+                Paragraph(f"{_el:.2f}" if _el is not None else '—', body_style),
+                Paragraph(f"{_px:.1f}" if _px is not None else '—', body_style),
+                Paragraph(str(_rs), body_style),
+            ])
+        _loss_table = Table(_loss_data, colWidths=[30*mm, 30*mm, 35*mm, 60*mm])
+        _loss_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#111818')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), CYAN_ACCENT),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1),
+             [colors.HexColor('#131c1c'), colors.HexColor('#0e1515')]),
+            ('GRID', (0, 0), (-1, -1), 0.3, BORDER),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ]))
+        content.append(Spacer(1, 4))
+        content.append(_loss_table)
+        if len(_loss_rows) > _MAX_LOSS_ROWS:
+            content.append(Paragraph(
+                f"+ {len(_loss_rows) - _MAX_LOSS_ROWS} further unlocked frames "
+                f"(see CSV lock_lost_reason column).", mono_style))
+    elif samples:
+        content.append(Paragraph(
+            'No unlocked frames — full retention across the episode.',
+            body_style))
+
     # Error statistics
     if samples:
         errors = [s.get('total_error', 0) or 0 for s in samples]
@@ -284,7 +373,7 @@ def generate_pdf(run_id: str) -> bytes:
         p95 = sorted_e[int(len(sorted_e) * 0.95)] if sorted_e else 0
 
         content.append(Spacer(1, 6))
-        content.append(section('4. Error Statistics'))
+        content.append(section('5. Error Statistics'))
         content.append(kv_table([
             ('Mean Error',           f"{sum(errors)/len(errors):.4f}°"),
             ('Median Error',         f"{sorted_e[len(sorted_e)//2]:.4f}°"),

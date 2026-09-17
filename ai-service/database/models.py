@@ -99,6 +99,20 @@ def init_db() -> None:
             conn.execute(f"ALTER TABLE telemetry_samples ADD COLUMN {col}")
         except Exception:
             pass
+    # Lock-retention diagnostics: per-frame unlock reason + run-level
+    # eligible/locked/unlocked partition (proves any retention shortfall
+    # frame-by-frame instead of hiding it in a percentage).
+    for col in ('lock_lost_reason TEXT',):
+        try:
+            conn.execute(f"ALTER TABLE telemetry_samples ADD COLUMN {col}")
+        except Exception:
+            pass
+    for col in ('eligible_frames INTEGER', 'locked_frames INTEGER',
+                'unlocked_frames INTEGER', 'missed_in_episode INTEGER'):
+        try:
+            conn.execute(f"ALTER TABLE simulation_runs ADD COLUMN {col}")
+        except Exception:
+            pass
     conn.commit()
     conn.close()
 
@@ -168,7 +182,9 @@ def complete_run(run_id: str, summary: dict, final_state: str, status: str = 'co
            lost_count=?, reacquisition_count=?,
            avg_reacquisition_time=?, max_reacquisition_time=?,
            rmse_px=?, average_error_px=?, max_error_px=?,
-           total_frames=?, target_loss_pct=?
+           total_frames=?, target_loss_pct=?,
+           eligible_frames=?, locked_frames=?,
+           unlocked_frames=?, missed_in_episode=?
            WHERE run_id=?""",
         (now, summary.get('duration'), summary.get('acquisition_time'),
          summary.get('average_error'), summary.get('max_error'),
@@ -179,6 +195,8 @@ def complete_run(run_id: str, summary: dict, final_state: str, status: str = 'co
          summary.get('avg_reacquisition_time'), summary.get('max_reacquisition_time'),
          summary.get('rmse_px'), summary.get('average_error_px'), summary.get('max_error_px'),
          summary.get('total_frames', 0), summary.get('target_loss_pct', 0.0),
+         summary.get('eligible_tracking_frames', 0), summary.get('locked_frames', 0),
+         summary.get('unlocked_tracking_frames', 0), summary.get('missed_in_episode', 0),
          run_id)
     )
     conn.commit()
@@ -276,8 +294,9 @@ def save_telemetry_samples(run_id: str, frames: list[tuple[dict, int]]) -> None:
                    (run_id, timestamp, frame_id, elapsed, target_state,
                     pan, tilt, pan_error, tilt_error, total_error,
                     confidence, fps, processing_ms, kalman_x, kalman_y, disturbance_idx,
-                    pixel_error_x, pixel_error_y, pixel_error_total, centroid_x, centroid_y, target_px_x, target_px_y)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    pixel_error_x, pixel_error_y, pixel_error_total, centroid_x, centroid_y, target_px_x, target_px_y,
+                    lock_lost_reason)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (run_id, frame.get('timestamp', time.time()), frame_id,
                  frame.get('elapsed', 0), frame.get('target_state', 'UNKNOWN'),
                  cam.get('pan', 0), cam.get('tilt', 0),
@@ -289,7 +308,8 @@ def save_telemetry_samples(run_id: str, frames: list[tuple[dict, int]]) -> None:
                  c_err.get('y', c_err.get('pixel_error_y')),
                  c_err.get('total', c_err.get('pixel_error_total')),
                  c_err.get('centroid_x'), c_err.get('centroid_y'),
-                 c_err.get('target_px_x'), c_err.get('target_px_y')))
+                 c_err.get('target_px_x'), c_err.get('target_px_y'),
+                 frame.get('lock_lost_reason')))
         conn.commit()
     finally:
         conn.close()

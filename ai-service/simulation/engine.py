@@ -1588,8 +1588,10 @@ class SimulationEngine:
                 confidence=conf,
                 target_state=self._target_state,
                 simulation_elapsed=self._elapsed,
-                pixel_error=round(pix_total, 3) if measured_px is not None else None,
+                pixel_error=round(pix_total, 3) if measured_px is not None else
+None,
                 measured=detection is not None,
+                frame_index=self._frame_id,
             )
 
             frame_metrics = self._metrics.frame_metrics()

@@ -254,9 +254,53 @@ class ImageBeaconDetector(DetectorInterface):
             bw = int(stats[i, cv2.CC_STAT_WIDTH])
             bh = int(stats[i, cv2.CC_STAT_HEIGHT])
 
-            # Filter unphysical streaks (edge artifacts beyond a big beacon)
+            # Filter unphysical streaks (edge artifacts beyond a big beacon).
+            # Smear-split exception: a fast beacon's motion smear merges
+            # with its head into one long component that fails the span
+            # gate — without a second look the tracker would fall back to
+            # minor blobs.  Re-threshold the rejected region high to isolate
+            # the bright core (the instantaneous beacon position; the tail
+            # is exposure history).  Position/shape come from the compact
+            # core, but size/flux credit the whole connected luminous mass
+            # (head + smear were emitted by the same source) — otherwise a
+            # smeared beacon can never outscore an isolated star.  Pure
+            # glare with no compact core still ends up rejected below.
+            core_abs_mask = None
+            struct_abs_mask = None
+            struct_wsum = None
+            struct_area = None
             if bw > self.MAX_SPAN_PX or bh > self.MAX_SPAN_PX:
-                continue
+                _ox, _oy, _ow, _oh = bx, by, bw, bh
+                region = work[by:by+bh, bx:bx+bw]
+                rpeak = float(np.max(region)) if region.size else 0.0
+                core_t = max(thresh + 0.05, min(0.92, rpeak - 0.20))
+                core_bin = (region >= core_t).astype(np.uint8)
+                cn, clab, cstats, _cc = cv2.connectedComponentsWithStats(
+                    core_bin, connectivity=8)
+                _best = None
+                for j in range(1, cn):
+                    _a = float(cstats[j, cv2.CC_STAT_AREA])
+                    _w = int(cstats[j, cv2.CC_STAT_WIDTH])
+                    _h = int(cstats[j, cv2.CC_STAT_HEIGHT])
+                    if (_a >= self.MIN_PIXELS and _w <= self.MAX_SPAN_PX
+                            and _h <= self.MAX_SPAN_PX):
+                        if _best is None or _a > _best[0]:
+                            _best = (_a, _w, _h, j)
+                if _best is None:
+                    continue
+                _a, _bw, _bh, _j = _best
+                # Absolute-geometry masks (region coords → frame coords).
+                struct_abs_mask = np.zeros_like(binary, dtype=bool)
+                struct_abs_mask[_oy:_oy+_oh, _ox:_ox+_ow] |= (
+                    labels[_oy:_oy+_oh, _ox:_ox+_ow] == i)
+                struct_wsum = float(np.sum(work[struct_abs_mask]))
+                struct_area = float(np.sum(struct_abs_mask))
+                core_abs_mask = np.zeros_like(binary, dtype=bool)
+                core_abs_mask[_oy:_oy+_oh, _ox:_ox+_ow] |= (clab == _j)
+                bx = _ox + int(cstats[_j, cv2.CC_STAT_LEFT])
+                by = _oy + int(cstats[_j, cv2.CC_STAT_TOP])
+                bw, bh = _bw, _bh
+                area = _a
 
             # Border artifacts: small bright clusters stapled to the frame
             # edge are compression/edge noise, not the beacon.
@@ -267,7 +311,10 @@ class ImageBeaconDetector(DetectorInterface):
                 continue
 
             crop = work[by:by+bh, bx:bx+bw]
-            mask = (labels[by:by+bh, bx:bx+bw] == i)
+            if core_abs_mask is not None:
+                mask = core_abs_mask[by:by+bh, bx:bx+bw]
+            else:
+                mask = (labels[by:by+bh, bx:bx+bw] == i)
             if not np.any(mask):
                 continue
 
@@ -286,15 +333,45 @@ class ImageBeaconDetector(DetectorInterface):
             # Shape metrics
             aspect = float(min(bw, bh) / max(bw, bh))
             fill_ratio = float(area / max(1, bw * bh))
-            size_match = float(min(area, expected_area) / max(area, expected_area))
+            # One-sided size prior: an oversize bright source is consistent
+            # with bloom / proximity / a larger-than-configured beacon and
+            # must NOT be punished for it (a symmetric ratio lets a 10 px
+            # star outscore the true 30+ px beacon).  Undersize sources are
+            # still penalized linearly — a 3 px speck is never the beacon.
+            # Streaks/glare are handled by aspect/fill/span gates instead.
+            # For a smear-split core, size/flux credit the whole connected
+            # luminous mass (same source), while position/shape stay core.
+            _size_area = struct_area if struct_area is not None else area
+            _flux_sum = struct_wsum if struct_wsum is not None else wsum
+            size_match = float(min(1.0, _size_area / max(1.0, expected_area)))
 
-            # Local contrast estimation (sample border ring around bbox)
-            rx0 = max(0, bx - 4)
-            rx1 = min(w, bx + bw + 4)
-            ry0 = max(0, by - 4)
-            ry1 = min(h, by + bh + 4)
-            surround = work[ry0:ry1, rx0:rx1]
-            bg_level = float(np.percentile(surround, 30))
+            # Sky background estimation (scale-adaptive annulus):
+            # the background floor must be measured where the sky actually
+            # is.  A fixed 4 px ring sits inside a large source's own halo
+            # (and inside neighbouring smear), so big beacons measured near-
+            # zero contrast and lost to isolated stars.  The annulus scales
+            # with the candidate (reaching past its halo into dark sky),
+            # excludes the candidate bbox + margin and any smear structure,
+            # and takes a low percentile so residual bright pixels (stars)
+            # cannot set the floor.  For small candidates this reduces to
+            # essentially the old ring behavior.
+            _ccx, _ccy = bx + bw // 2, by + bh // 2
+            _rout = max(10, int(math.hypot(bw, bh) * 2.0))
+            _ax0, _ax1 = max(0, _ccx - _rout), min(w, _ccx + _rout)
+            _ay0, _ay1 = max(0, _ccy - _rout), min(h, _ccy + _rout)
+            _ann = work[_ay0:_ay1, _ax0:_ax1]
+            _keep = np.ones_like(_ann, dtype=bool)
+            _m = 3
+            _kx0, _kx1 = max(_ax0, bx - _m) - _ax0, min(_ax1, bx + bw + _m) - _ax0
+            _ky0, _ky1 = max(_ay0, by - _m) - _ay0, min(_ay1, by + bh + _m) - _ay0
+            _keep[_ky0:_ky1, _kx0:_kx1] = False
+            if struct_abs_mask is not None:
+                _keep &= ~struct_abs_mask[_ay0:_ay1, _ax0:_ax1]
+            _sky_vals = _ann[_keep]
+            if _sky_vals.size > 8:
+                bg_level = float(np.percentile(_sky_vals, 10))
+            else:
+                bg_level = float(np.percentile(_ann, 10))
             contrast = max(0.0, peak - bg_level)
 
             # Spatial consistency against Kalman prediction (PRIORITY, NOT GROUND TRUTH)
@@ -317,7 +394,12 @@ class ImageBeaconDetector(DetectorInterface):
             # peak at 1.0 (peak alone cannot distinguish them), and shape is
             # deliberately gentle so an elongated streak-beacon is not
             # punished for failing to be square.
-            flux_match = min(1.0, wsum / max(1.0, expected_area * 0.9))
+            # Flux term saturates smoothly (Michaelis-Menten form) instead
+            # of a hard cap: a much brighter source always outranks a dim
+            # one, so a large true beacon is never tied-and-lost to a small
+            # star on capped flux while size_match punishes its area.  A
+            # correctly-sized beacon still wins overall via size_match.
+            flux_match = _flux_sum / (_flux_sum + max(1.0, expected_area * 0.9))
             visual_score = (
                 0.25 * peak +
                 0.20 * min(1.0, contrast * 1.5) +

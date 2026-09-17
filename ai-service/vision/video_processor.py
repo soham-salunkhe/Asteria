@@ -46,6 +46,7 @@ from tracking_constants import (
     PID_D_FILTER_ALPHA,
     FF_VEL_EMA_ALPHA,
     CONTROL_DEADBAND_PX,
+    FF_ALIGN_AUTHORITY,
     PID_SETTLING_DEG,
     KALMAN_Q, KALMAN_R, KALMAN_P0,
     pixel_error_to_gimbal_error,
@@ -461,6 +462,20 @@ class VideoProcessor:
                 if detection:
                     ff_pan_rate = raw_velocity_x / px_per_deg_h
                     ff_tilt_rate = -raw_velocity_y / px_per_deg_v
+                    # Phase-aware FF authority (FF_ALIGN_AUTHORITY): scale
+                    # feedforward by the cosine between residual and velocity.
+                    # Chasing a lagging residual (aligned) pushes harder;
+                    # overshooting a turnaround (opposed) self-brakes.
+                    # Bounded to 1±authority, so worst case equals unscaled.
+                    _res_mag = math.hypot(control_error_x, control_error_y)
+                    _vel_mag = math.hypot(raw_velocity_x, raw_velocity_y)
+                    if _res_mag > 1e-6 and _vel_mag > 1e-6:
+                        _cos_a = ((control_error_x * raw_velocity_x
+                                   + control_error_y * raw_velocity_y)
+                                  / (_res_mag * _vel_mag))
+                        _scale = 1.0 + FF_ALIGN_AUTHORITY * max(-1.0, min(1.0, _cos_a))
+                        ff_pan_rate *= _scale
+                        ff_tilt_rate *= _scale
                 else:
                     ff_pan_rate, ff_tilt_rate = 0.0, 0.0
                 # Adaptive velocity cap: during acquisition use the full slew
@@ -518,6 +533,14 @@ class VideoProcessor:
                             target_state = 'TRACKING'
                             lock_lost_reason = 'ERROR_TOO_HIGH'
                             lock_count = LOCK_FRAMES_REQUIRED - 1  # close to re-locking
+                            # The integrator holds the pre-excursion direction's
+                            # bias; after a genuine excursion (3 frames >20px,
+                            # typically a direction reversal) that bias fights
+                            # the turnaround.  Zero it so P+D+FF re-acquire
+                            # without dragging stale history.  Derivative
+                            # state is preserved; steady lock never touches
+                            # this path, so hold stability is unaffected.
+                            self._pid.reset_integral()
                         # else: stay LOCKED despite error spike
                     elif lock_count >= LOCK_FRAMES_REQUIRED:
                         target_state = 'LOCKED'
@@ -610,6 +633,8 @@ class VideoProcessor:
                     simulation_elapsed=elapsed,
                     pixel_error=round(pix_total, 3) if pix_total is not None else None,
                     measured=detected,
+                    frame_index=frame_id,
+                    lock_reason=lock_lost_reason,
                 )
 
                 # ── Broadcast telemetry ──────────────────────────

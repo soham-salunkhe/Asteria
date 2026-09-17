@@ -23,7 +23,7 @@ def generate_csv(run_id: str) -> str:
         'pixel_error_x', 'pixel_error_y', 'pixel_error_total',
         'pan', 'tilt', 'pan_error', 'tilt_error', 'total_error',
         'confidence', 'fps', 'processing_ms', 'kalman_x', 'kalman_y',
-        'disturbance_idx'
+        'disturbance_idx', 'lock_lost_reason',
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
     writer.writeheader()

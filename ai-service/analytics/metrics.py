@@ -30,12 +30,12 @@ class RunMetrics:
 
     def __init__(self):
         self._start_time: float = time.time()
+        self._wall_start: float = time.time()
         self._frame_count: int = 0
         # Capped deques — O(1) append, O(1) popleft, fixed memory
         self._frame_times: deque[float] = deque(maxlen=_MAX_HISTORY)
         self._processing_times: deque[float] = deque(maxlen=_MAX_HISTORY)
         self._angular_errors: deque[float] = deque(maxlen=_MAX_HISTORY)
-        self._pixel_errors: deque[float] = deque(maxlen=_MAX_HISTORY)
         self._confidences: deque[float] = deque(maxlen=_MAX_HISTORY)
         self._target_states: deque[str] = deque(maxlen=_MAX_HISTORY)
         # Frames with no valid measurement (detection miss / no coast)
@@ -47,6 +47,17 @@ class RunMetrics:
         # the retention denominator — nor are pre-first-lock TRACKING frames
         # (entry cost belongs to acquisition_time/avg/RMSE; see update()).
         self._eligible_tracking_frames: int = 0
+        # Eligible-but-not-LOCKED frames (TRACKING wobble inside an active
+        # episode) and detection misses inside an active episode.  These two
+        # plus locked frames partition the eligible population, so any
+        # retention shortfall is exactly attributable — never faked.
+        self._unlocked_tracking_frames: int = 0
+        self._missed_in_episode: int = 0
+        # Bounded per-loss log: (frame index, video/sim time, reason).
+        # Newest retained; never grows the process.  Reasons use the
+        # lock_lost_reason taxonomy where the caller supplies it, else an
+        # inferred label (never invented per-frame detail).
+        self._loss_log: deque[dict] = deque(maxlen=200)
         # True once the first LOCKED of the current episode is seen; cleared
         # on LOST.  A new episode re-arms at its next LOCKED.
         self._lock_episode_active: bool = False
@@ -58,8 +69,13 @@ class RunMetrics:
         # Running max tracked as a scalar — no list scan needed
         self._max_angular_error: float = 0.0
         self._max_pixel_error: float = 0.0
-        # O(1) RMSE accumulators (PS169 Benchmark-2 explicitly evaluates RMSE)
-        # RMSE = sqrt(sum_sq / count) where only TRACKING/LOCKED frames are counted.
+        # O(1) pixel-error accumulators (PS169 Benchmark-2 explicitly
+        # evaluates RMSE).  avg AND rmse share the identical TRACKING/LOCKED
+        # sample population over the full run (no trailing-window skew):
+        #   avg  = sum / count
+        #   rmse = sqrt(sum_sq / count)
+        self._sum_pixel_error: float = 0.0
+        self._pixel_count: int = 0
         self._sum_sq_pixel_error: float = 0.0
         self._rmse_count: int = 0
         # Re-acquisition tracking
@@ -76,6 +92,8 @@ class RunMetrics:
         simulation_elapsed: float,
         pixel_error: Optional[float] = None,
         measured: bool = True,
+        frame_index: Optional[int] = None,
+        lock_reason: Optional[str] = None,
     ) -> None:
         self._frame_count += 1
         self._total_frames += 1
@@ -89,10 +107,11 @@ class RunMetrics:
         # "acquisition" vs "tracking" performance.
         if (pixel_error is not None
                 and target_state in ('TRACKING', 'LOCKED')):
-            self._pixel_errors.append(pixel_error)
+            self._sum_pixel_error += pixel_error
+            self._pixel_count += 1
             if pixel_error > self._max_pixel_error:
                 self._max_pixel_error = pixel_error
-            # O(1) RMSE accumulation
+            # O(1) RMSE accumulation (same sample population as avg)
             self._sum_sq_pixel_error += pixel_error * pixel_error
             self._rmse_count += 1
         if not measured:
@@ -103,6 +122,7 @@ class RunMetrics:
         if angular_error is not None and angular_error > self._max_angular_error:
             self._max_angular_error = angular_error
 
+        log_idx = frame_index if frame_index is not None else self._total_frames
         if target_state == 'LOCKED':
             self._lock_frames += 1
             # A lock episode starts at the first LOCKED frame.  Retention
@@ -116,21 +136,43 @@ class RunMetrics:
             self._lock_episode_active = True
         if target_state == 'LOST':
             self._lock_episode_active = False
+            self._loss_log.append({'frame': log_idx, 't': round(simulation_elapsed, 3),
+                                   'reason': 'STATE_LOST'})
         if (measured and target_state in ('TRACKING', 'LOCKED')
                 and self._lock_episode_active):
             self._eligible_tracking_frames += 1
+            if target_state == 'TRACKING':
+                # Eligible but unlocked: error-above-gate wobble inside an
+                # established episode (or re-lock dwell).  Counts against
+                # retention — this is the honest shortfall, never hidden.
+                self._unlocked_tracking_frames += 1
+                reason = (lock_reason if lock_reason not in (None, 'NONE')
+                          else 'ERROR_ABOVE_GATE')
+                self._loss_log.append({'frame': log_idx, 't': round(simulation_elapsed, 3),
+                                       'reason': reason})
+        elif (not measured) and self._lock_episode_active:
+            # Detection gap inside an established episode: not eligible
+            # (no measurement), but recorded so gaps can't hide silently.
+            self._missed_in_episode += 1
+            reason = (lock_reason if lock_reason not in (None, 'NONE')
+                      else 'NO_DETECTION')
+            self._loss_log.append({'frame': log_idx, 't': round(simulation_elapsed, 3),
+                                   'reason': reason})
 
         if target_state in ('DETECTED', 'ACQUIRING', 'TRACKING', 'LOCKED'):
             if self._first_detection_time is None:
                 self._first_detection_time = simulation_elapsed
 
-        if target_state in ('TRACKING', 'LOCKED'):
+        if target_state == 'LOCKED':
             if self._acquisition_time is None:
-                # Acquisition starts at the first valid sensor measurement,
-                # not video decode, upload, or UI startup time.
+                # Acquisition = ACQUISITION_START (first real sensor
+                # measurement, not decode/upload/UI time) → first valid
+                # LOCKED condition.  Earlier TRACKING frames are entry
+                # cost, not acquisition complete.
                 self._acquisition_time = simulation_elapsed - (
                     self._first_detection_time
                     if self._first_detection_time is not None else simulation_elapsed)
+                self._acquisition_frame = log_idx
 
         if target_state == 'LOST':
             self._lost_count += 1
@@ -143,10 +185,9 @@ class RunMetrics:
             self._reacq_start = None
 
     def _pixel_stats(self) -> tuple[Optional[float], Optional[float]]:
-        errs = list(self._pixel_errors)
-        if not errs:
+        if self._pixel_count == 0:
             return (None, None)
-        return (sum(errs) / len(errs), self._max_pixel_error)
+        return (self._sum_pixel_error / self._pixel_count, self._max_pixel_error)
 
     def rmse_px(self) -> Optional[float]:
         """RMSE of pixel tracking error over TRACKING/LOCKED frames.
@@ -247,10 +288,16 @@ class RunMetrics:
 
         elapsed = time.time() - self._start_time
         fps = self.current_fps()
+        wall_elapsed = max(time.time() - self._wall_start, 1e-6)
+        wall_fps = self._total_frames / wall_elapsed
 
         return {
             'duration': round(elapsed, 2),
             'avg_fps': round(fps, 1),
+            # Wall-clock processing throughput (frames / wall second).
+            # For video input `avg_fps` follows the video sensor clock by
+            # design; this is the honest decode+pipeline rate.
+            'processing_fps_wall': round(wall_fps, 1),
             'acquisition_time': round(self._acquisition_time, 3)
                                 if self._acquisition_time is not None else None,
             'average_error': round(avg_err, 4),
@@ -261,6 +308,14 @@ class RunMetrics:
                         if self.rmse_px() is not None else None),
             'target_loss_pct': round(self._loss_pct(), 2),
             'lock_retention': round(lock_ret, 2) if lock_ret is not None else None,
+            # Lock-retention diagnostics: eligible/locked/unlocked partition
+            # the eligible population exactly (locked + unlocked == eligible),
+            # so any shortfall is attributable frame-by-frame, never hidden.
+            'eligible_tracking_frames': self._eligible_tracking_frames,
+            'locked_frames': self._lock_frames,
+            'unlocked_tracking_frames': self._unlocked_tracking_frames,
+            'missed_in_episode': self._missed_in_episode,
+            'recent_lock_losses': list(self._loss_log),
             'avg_processing_ms': round(avg_proc, 2),
             'detection_confidence': round(avg_conf, 4),
             'total_frames': self._total_frames,
@@ -290,7 +345,7 @@ class RunMetrics:
                 sum(errors) / len(errors), 4) if errors else 0.0,
             'max_error': round(self._max_angular_error, 4),
             'average_error_px': round(avg_px, 3) if avg_px is not None else None,
-            'max_error_px': round(self._max_pixel_error, 3) if self._pixel_errors else None,
+            'max_error_px': round(self._max_pixel_error, 3) if self._pixel_count else None,
             'rmse_px': (round(self.rmse_px(), 3)
                         if self.rmse_px() is not None else None),
             'target_loss_pct': round(self._loss_pct(), 2),
@@ -299,6 +354,10 @@ class RunMetrics:
             'lock_retention': (round(
                 self._lock_frames / self._eligible_tracking_frames * 100.0, 2)
                 if self._eligible_tracking_frames > 0 else None),
+            'eligible_tracking_frames': self._eligible_tracking_frames,
+            'locked_frames': self._lock_frames,
+            'unlocked_tracking_frames': self._unlocked_tracking_frames,
+            'missed_in_episode': self._missed_in_episode,
             'ps169': self.ps169(),
         }
 
