@@ -1279,6 +1279,8 @@ export interface TwinApi {
   setToggle: (k: keyof TwinToggles, v: boolean) => void;
   /** Spawn an operator-owned target platform or satellite terminal. */
   addEntity: (kind: 'target' | 'satellite') => void;
+  /** Drop local objects/selection/view state back to initial (END DEMO). */
+  resetScene: () => void;
 }
 
 interface ViewRequest {
@@ -1868,21 +1870,36 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
   const positionsRef = useRef<Map<string, V3>>(new Map());
   const velocitiesRef = useRef<Map<string, V3>>(new Map());
 
-  // END DEMO is distinct from STOP TRACKING: discard only client-side
-  // runtime scene objects when the backend broadcasts its clean scenario.
-  // The move gizmo is re-armed (not disarmed): with nothing selected no
-  // arrows render, and the next selection is immediately draggable again.
-  useEffect(() => {
-    if (!frame?.scenario_reset) return;
+  // Local scene reset: drops operator-added objects, selection, view and
+  // shift state back to initial. Used both by the backend clean-scenario
+  // broadcast AND directly by the embedding page on END DEMO, so stale
+  // objects vanish even if the reset telemetry frame lags behind.
+  const resetLocalScene = () => {
     setObjects([]);
     setSelectedId(null);
     setGizmoMode('translate');
     setEntityGraph([]);
     positionsRef.current.clear();
     velocitiesRef.current.clear();
+    setOffset([0, 0, 0]);
+    setPanelTick(null);
+    setCameraMode('free');
+    setViewReq(null);
     localTargetCounter = 1;
     localSatCounter = 1;
     void refreshEntityGraph();
+  };
+
+  // END DEMO is distinct from STOP TRACKING: discard only client-side
+  // runtime scene objects when the backend broadcasts its clean scenario.
+  // The move gizmo is re-armed (not disarmed): with nothing selected no
+  // arrows render, and the next selection is immediately draggable again.
+  // All operator view/shift state returns to initial: camera orbits free,
+  // 3D-shift sliders zero, inspector cleared.
+  useEffect(() => {
+    if (!frame?.scenario_reset) return;
+    resetLocalScene();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frame?.scenario_reset]);
 
   // The backend registry is the authoritative identity/relationship graph.
@@ -2335,6 +2352,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
       toggles: { orbits: settings.trajectory, fov: settings.fov, labels: settings.labels },
       setToggle: (k, v) => setS(k === 'orbits' ? 'trajectory' : k, v),
       addEntity: (kind) => void addObject(kind),
+      resetScene: () => resetLocalScene(),
     });
   });
 

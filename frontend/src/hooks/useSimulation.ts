@@ -212,6 +212,10 @@ function useSimulationState() {
   const endDemo = useCallback(async () => {
     await fsocApi.endDemo();
     historyBuffer.current = [];
+    // Drop the frozen last frame too: the twin/panels fall back to
+    // initial conditions immediately, and the backend's reset frame
+    // (fresh positions, pan/tilt zeroed) confirms authoritatively.
+    setLatest(null);
     setHistory([]);
     setEvents([]);
     setStatusOverride('idle');

@@ -459,6 +459,17 @@ class SimulationEngine:
             await self.stop()
 
         self._apply_config(config or {})
+        # Fresh run = fresh scene: drop targets/links left over from
+        # previous runs so stale duplicates can never survive into the
+        # new scenario (only the newly configured primary is kept).
+        primary_id = self._target.config.id if self._target else None
+        stale = [t for t in self._targets if t != primary_id]
+        for t in stale:
+            self._targets.pop(t, None)
+            self._target_links.pop(t, None)
+        if stale:
+            self._emit_event('info',
+                             f'SCENARIO REBUILT — cleared stale: {", ".join(sorted(stale))}')
         self._reset_state()
         # PS169 startup parameter validation — fail loudly, never silently
         # correct invalid values.
@@ -485,6 +496,34 @@ class SimulationEngine:
         self._demo_mode = demo_mode
         self._demo_phase = 0
         self._demo_phase_start = 0.0
+
+        # Initial ephemeris cue (same privilege as the TRACK handover):
+        # the configured deploy position is known at start, so slew the
+        # gimbal onto it immediately instead of blind-sweeping a 4°×3°
+        # peephole for it. Detection stays purely image-based afterwards —
+        # PID/Kalman must still pull the residual to ≤10 px and hold
+        # LOCK_FRAMES_REQUIRED frames before LOCKED. Nothing is forced.
+        if self._target is not None:
+            try:
+                # Prime one step so the cue uses first-frame truth: several
+                # trajectories carry phase offsets (e.g. sinusoidal Y starts
+                # +21 m off-origin), so the t=0 attribute is NOT where the
+                # beacon renders on frame 1. Cueing from the primed position
+                # puts the beacon inside the FOV on the first frame for ANY
+                # trajectory definition, present or future.
+                _prime_dt = 1.0 / (float(getattr(self._camera.config, 'fps', 30.0)) or 30.0)
+                self._target.update(_prime_dt, 0.0)
+                t0 = self._target.position
+                b0 = self._target.config.beacon_offset
+                tot_pan, tot_tilt = self._coarse_slew_to(
+                    Vec3(t0.x + b0.x, t0.y + b0.y, t0.z + b0.z))
+                self._emit_event('info',
+                                 f'INITIAL CUE → {self._target.config.id} '
+                                 f'(Δpan {tot_pan:+.1f}° Δtilt {tot_tilt:+.1f}°)')
+            except Exception:
+                pass
+            self._search_pan0 = self._camera.pan
+            self._search_tilt0 = self._camera.tilt
 
         # Create run record in DB
         self._run_id = db.create_run(
@@ -1036,41 +1075,7 @@ class SimulationEngine:
         self._lost_frames_threshold = max(10, int(fps * self.LOST_GRACE_SECONDS))
         self._coast_frames = max(1, int(fps * 1.0))
 
-        # ── Coarse pointing handover + open-loop search anchor ─────
-        # TRACK TARGET is an operator-directed handover (like an ephemeris
-        # cue): slew the gimbal toward the target's current angular
-        # position so a far beacon enters the narrow 4°×3° FOV in 1–2
-        # frames instead of minutes of blind sweeping. Detection stays
-        # purely image-based afterwards — PID/Kalman still have to pull
-        # the residual to ≤10 px for LOCKED, nothing is forced.
-        try:
-            t = self._target.position
-            b = self._target.config.beacon_offset
-            o = self._target_offset
-            beacon_pos = Vec3(t.x + b.x + o.x, t.y + b.y + o.y, t.z + b.z + o.z)
-            fps_c = float(getattr(self._camera.config, 'fps', 30.0)) or 30.0
-            dt_c = 1.0 / max(fps_c, 1.0)
-            # Two-pass slew (pan then tilt, repeated): pan/tilt are coupled
-            # in YXZ order, so applying both deltas at once overshoots tilt
-            # by several degrees — enough to miss the 4°×3° FOV entirely.
-            tot_pan, tot_tilt = 0.0, 0.0
-            for _ in range(2):
-                pan_err, _ = self._camera.angular_error_to_target(beacon_pos)
-                self._camera.apply_correction(pan_err, 0.0, dt_c)
-                tot_pan += pan_err
-                _, tilt_err = self._camera.angular_error_to_target(beacon_pos)
-                self._camera.apply_correction(0.0, tilt_err, dt_c)
-                tot_tilt += tilt_err
-            # Behind-aperture returns ±120°/±60° — still slew toward it;
-            # the expanding sweep then covers the hemisphere.
-            self._emit_event('info',
-                             f'COARSE SLEW → {target_id} '
-                             f'(Δpan {tot_pan:+.1f}° Δtilt {tot_tilt:+.1f}°)')
-        except Exception:
-            pass
-        self._search_pan0 = self._camera.pan
-        self._search_tilt0 = self._camera.tilt
-        self._search_phase = 0.0
+        self._switch_slew_and_anchor(target_id)
 
         if self._broadcast and not self._running:
             try:
@@ -1089,6 +1094,48 @@ class SimulationEngine:
         self._emit_event('info', f'TRACK TARGET — {target_id}')
         self._emit_event('info', f'ACQUISITION STARTED — SEARCHING FOR {target_id}')
         return {'success': True, 'target_id': target_id}
+
+    def _coarse_slew_to(self, beacon_pos: Vec3) -> tuple:
+        """Immediate open-loop slew of the gimbal onto a beacon position.
+
+        Shared handover primitive: the caller already knows the cue
+        (ephemeris at TRACK, configured deploy position at START). Two-pass
+        slew (pan then tilt, repeated) because pan/tilt couple in YXZ order
+        and a single joint correction overshoots tilt past the 4°×3° FOV.
+        Detection stays purely image-based afterwards — PID/Kalman still
+        have to pull the residual to ≤10 px and hold it, nothing is forced.
+        Returns (total_pan_deg, total_tilt_deg) applied.
+        """
+        fps_c = float(getattr(self._camera.config, 'fps', 30.0)) or 30.0
+        dt_c = 1.0 / max(fps_c, 1.0)
+        tot_pan, tot_tilt = 0.0, 0.0
+        for _ in range(2):
+            pan_err, _ = self._camera.angular_error_to_target(beacon_pos)
+            self._camera.apply_correction(pan_err, 0.0, dt_c)
+            tot_pan += pan_err
+            _, tilt_err = self._camera.angular_error_to_target(beacon_pos)
+            self._camera.apply_correction(0.0, tilt_err, dt_c)
+            tot_tilt += tilt_err
+        return tot_pan, tot_tilt
+
+    def _switch_slew_and_anchor(self, target_id: str) -> None:
+        """Coarse pointing handover + open-loop search anchor for TRACK."""
+        try:
+            t = self._target.position
+            b = self._target.config.beacon_offset
+            o = self._target_offset
+            tot_pan, tot_tilt = self._coarse_slew_to(
+                Vec3(t.x + b.x + o.x, t.y + b.y + o.y, t.z + b.z + o.z))
+            # Behind-aperture returns ±120°/±60° — still slew toward it;
+            # the expanding sweep then covers the hemisphere.
+            self._emit_event('info',
+                             f'COARSE SLEW → {target_id} '
+                             f'(Δpan {tot_pan:+.1f}° Δtilt {tot_tilt:+.1f}°)')
+        except Exception:
+            pass
+        self._search_pan0 = self._camera.pan
+        self._search_tilt0 = self._camera.tilt
+        self._search_phase = 0.0
 
     def move_target(self, target_id: str, position: Optional[dict]) -> dict:
         """Manually relocate one registered target (operator gizmo/panel move).

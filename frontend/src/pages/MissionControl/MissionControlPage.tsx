@@ -36,7 +36,10 @@ interface TargetForm {
 }
 
 const DEFAULT_TARGET: TargetForm = {
-  id: 'BEACON-01',
+  // NOTE: this is the TARGET id. The beacon is derived as BEACON-<suffix>
+  // (BEACON-01). Naming a target like its beacon duplicates the beacon id
+  // across the registry and twin — never do that.
+  id: 'TARGET-01',
   trajectory: 'sinusoidal',
   amplitude_h: 90,
   amplitude_v: 45,
@@ -176,7 +179,8 @@ export function MissionControlPage() {
     : { label: 'IDLE', color: '#626a6d' };
 
   const liveTargetId = f?.target?.entity?.id ?? f?.target?.id ?? target.id;
-  const liveBeaconId = f?.target?.entity?.beaconId ?? f?.target?.beacon?.id ?? target.id;
+  const beaconIdFor = (tid: string) => `BEACON-${tid.split('-').pop() ?? tid}`;
+  const liveBeaconId = f?.target?.entity?.beaconId ?? f?.target?.beacon?.id ?? beaconIdFor(target.id);
   // Target and beacon ids can coincide pre-run (both default to the
   // configured id) — dedupe so React keys stay unique.
   const entityIds = Array.from(new Set(
@@ -205,6 +209,7 @@ export function MissionControlPage() {
     },
     target: {
       id: target.id,
+      beacon_id: `BEACON-${target.id.split('-').pop() ?? target.id}`,
       trajectory: target.trajectory,
       initial_position: { x: target.start_x, y: target.start_y, z: target.start_z },
       velocity: { x: target.speed_x, y: target.speed_y, z: 0 },
@@ -340,7 +345,7 @@ export function MissionControlPage() {
                 className="mc-cfg-input"
                 value={target.id}
                 onChange={e => setT('id', e.target.value)}
-                placeholder="BEACON-01"
+                placeholder="TARGET-01"
               />
             </div>
 
@@ -525,7 +530,7 @@ export function MissionControlPage() {
                     </button>
                     <button
                       className="mc2-btn mc2-btn-end"
-                      onClick={() => sim.endDemo()}
+                      onClick={() => { twin?.resetScene(); sim.endDemo(); }}
                       title="End demo and clear runtime-created entities"
                     >
                       ◼ END DEMO
