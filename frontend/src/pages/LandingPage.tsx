@@ -23,6 +23,22 @@ function Chevron() {
   return <span className="lp-button-arrow" aria-hidden="true">→</span>;
 }
 
+function DownloadArrow() {
+  return <span className="lp-button-arrow" aria-hidden="true">↓</span>;
+}
+
+/* ── Desktop release download (website only) ───────────────────
+   The packaged Windows installer is published as a GitHub release
+   asset. Override with VITE_RELEASE_SETUP_URL in frontend/.env.
+   Hidden inside the Electron desktop app (users already have it). */
+const SETUP_DOWNLOAD_URL =
+  import.meta.env.VITE_RELEASE_SETUP_URL ||
+  'https://github.com/soham-salunkhe/Asteria/releases/download/v1.0.0/ASTERIA-Setup-1.0.0.exe';
+
+const isDesktopApp =
+  typeof window !== 'undefined' &&
+  (window.location.protocol === 'file:' || !!(window as any).asteriaDesktop);
+
 /* ── 1-bit pixel headline: text is rasterized tiny, thresholded to
       hard on/off blocks, then upscaled with smoothing OFF so every
       pixel is a chunky uniform square (no webfont dependency). ─── */
@@ -185,7 +201,14 @@ export function LandingPage() {
             <CrosshairMark compact />
             <span>ASTERIA <small>v1.0.0</small></span>
           </Link>
-          <button className="lp-launch-btn" onClick={launch}>LAUNCH SYSTEM <Chevron /></button>
+          <div className="lp-nav-actions">
+            {!isDesktopApp && (
+              <a className="lp-launch-btn lp-download-btn" href={SETUP_DOWNLOAD_URL} title="Download ASTERIA Setup v1.0.0 for Windows">
+                DOWNLOAD SETUP <DownloadArrow />
+              </a>
+            )}
+            <button className="lp-launch-btn" onClick={launch}>LAUNCH SYSTEM <Chevron /></button>
+          </div>
         </div>
       </header>
 
@@ -199,7 +222,14 @@ export function LandingPage() {
                 <PixelHeadline />
               </h1>
               <p className="lp-subtitle">A VIRTUAL CAMERA TRACKING SYSTEM<br />FOR FREE-SPACE OPTICAL COMMUNICATION</p>
-              <button className="lp-primary-btn" onClick={launch}>LAUNCH SYSTEM <Chevron /></button>
+              <div className="lp-hero-actions">
+                <button className="lp-primary-btn" onClick={launch}>LAUNCH SYSTEM <Chevron /></button>
+                {!isDesktopApp && (
+                  <a className="lp-primary-btn lp-download-btn" href={SETUP_DOWNLOAD_URL} title="Download ASTERIA Setup v1.0.0 for Windows">
+                    DOWNLOAD SETUP <DownloadArrow />
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </section>
