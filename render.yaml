@@ -1,0 +1,36 @@
+# ──────────────────────────────────────────────────────
+# ASTERIA — Render Blueprint (backend services)
+# Dashboard → New → Blueprint → select this repo.
+# The frontend itself deploys on Vercel (see frontend/vercel.json).
+# After deploy, copy the two service URLs into Vercel env vars:
+#   VITE_FSOC_API_URL=https://<engine-url>
+#   VITE_FSOC_WS_URL=wss://<engine-url>/ws/simulation
+#   VITE_API_URL=https://<backend-url>
+# ──────────────────────────────────────────────────────
+services:
+  # Python tracking engine: REST + WebSocket simulation API (SQLite, no external DB)
+  - type: web
+    name: asteria-engine
+    runtime: python
+    rootDir: ai-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn fsoc_main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      # Any Python 3.11+ works; pin one Render supports
+      - key: PYTHON_VERSION
+        value: 3.12.9
+
+  # Node proxy: Gemini Engineering Copilot (/api/guide) + health
+  - type: web
+    name: asteria-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /api/health
+    envVars:
+      # Set in the Render dashboard (keep secret). Copilot returns 503 without it;
+      # everything else works.
+      - key: GEMINI_API_KEY
+        sync: false
