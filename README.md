@@ -4,6 +4,15 @@
 
 > **SEE · ACQUIRE · TRACK · ALIGN**
 
+🌐 **Live Demo:**  
+https://asteria-fsoc.vercel.app/
+
+📌 **GitHub Repository:**  
+https://github.com/soham-salunkhe/Asteria
+
+📦 **Asteria v1.0.0 — Download:**  
+https://github.com/soham-salunkhe/Asteria/releases/tag/v1.0.0
+
 ASTERIA is a **standalone software simulation and benchmarking platform** for coarse Pointing, Acquisition and Tracking (PAT) in Free Space Optical Communication (FSOC).
 
 It simulates a moving optical beacon, detects and tracks it using computer vision, estimates its motion with a Kalman Filter, and continuously corrects a virtual pan/tilt camera using closed-loop PID control.
