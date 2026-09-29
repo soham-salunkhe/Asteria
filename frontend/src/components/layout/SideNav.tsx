@@ -1,5 +1,5 @@
-import React from 'react';
-import { NavLink, Link } from 'react-router-dom';
+import React, { useState } from 'react';
+import { NavLink, Link, useLocation } from 'react-router-dom';
 import type { WsStatus } from '../../hooks/useSimulation';
 
 interface NavItem {
@@ -26,6 +26,16 @@ interface Props {
 }
 
 export function SideNav({ wsStatus, simStatus }: Props) {
+  // Mobile drawer state — the hamburger + scrim are only visible ≤640px (see responsive.css).
+  // Drawer closes on navigation via render-phase adjustment (no effect needed).
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+  const [seenPath, setSeenPath] = useState(location.pathname);
+  if (location.pathname !== seenPath) {
+    setSeenPath(location.pathname);
+    if (open) setOpen(false);
+  }
+
   const wsColor = wsStatus === 'connected' ? '#8fa98f' :
                   wsStatus === 'error'     ? '#a86a5a' : '#626a6d';
 
@@ -33,7 +43,23 @@ export function SideNav({ wsStatus, simStatus }: Props) {
                    simStatus === 'paused'  ? '#d98618' : '#626a6d';
 
   return (
-    <nav className="sidenav">
+    <>
+      <button
+        className="sidenav-toggle"
+        aria-label={open ? 'Close navigation' : 'Open navigation'}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+      </button>
+      <div
+        className={`sidenav-scrim${open ? ' sidenav-scrim--show' : ''}`}
+        onClick={() => setOpen(false)}
+        aria-hidden="true"
+      />
+      <nav className={`sidenav${open ? ' sidenav--open' : ''}`}>
       {/* Logo */}
       <Link to="/" className="sidenav-logo" style={{ textDecoration: 'none', cursor: 'pointer' }}>
         <LogoMark />
@@ -84,6 +110,7 @@ export function SideNav({ wsStatus, simStatus }: Props) {
         </div>
       </div>
     </nav>
+    </>
   );
 }
 

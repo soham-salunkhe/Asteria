@@ -1,0 +1,294 @@
+/* ============================================================
+   ASTERIA — Responsive System
+   Loaded LAST (see main.tsx) so these rules win ties.
+   Desktop-first: breakpoints at 1024 / 860 / 640 / 480 / 360px.
+   ============================================================ */
+
+/* ── Landing: always restore authored button font ─────────── */
+.lp-root a.lp-launch-btn, .lp-root button.lp-launch-btn,
+.lp-root a.lp-primary-btn, .lp-root button.lp-primary-btn {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ── Small laptop (≤1024px) ───────────────────────────────── */
+@media (max-width: 1024px) {
+  .analytics-charts-grid { grid-template-columns: 1fr; }
+  .mc-cfg-params-grid { grid-template-columns: repeat(2, 1fr); }
+  .mc2-viz { min-height: 360px; }
+  body .login-layout, body .signup-layout { padding-inline: 22px; gap: 30px; }
+  .setting-label { width: 180px; flex-basis: 180px; }
+}
+
+/* ── Tablet (≤860px) ──────────────────────────────────────── */
+@media (max-width: 860px) {
+  /* Live Tracking */
+  .page-tracking { flex-direction: column; overflow-y: auto; height: auto; min-height: 100vh; }
+  .tracking-viewport { border-right: 0; border-bottom: 1px solid var(--border); min-height: 56vw; flex-shrink: 0; }
+  .tracking-sidebar { width: auto; overflow: visible; border-top: 1px solid var(--border); }
+  .viewport-strip { flex-wrap: wrap; row-gap: 6px; }
+  .page-header { flex-wrap: wrap; row-gap: 4px; }
+  .mc2-twin-head { grid-template-columns: 1fr; }
+
+  /* Detection */
+  .detection-body { flex-direction: column; overflow-y: auto; height: auto; }
+  .detection-info-col { width: auto; border-left: 0; border-top: 1px solid var(--border); }
+
+  /* Disturbances */
+  .disturbances-body { flex-direction: column; overflow-y: auto; height: auto; }
+  .dist-controls-col { width: auto; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+
+  /* Reports */
+  .reports-body { flex-direction: column; overflow-y: auto; height: auto; }
+  .reports-list-col { border-right: 0; border-bottom: 1px solid var(--border); max-height: 46vh; }
+  .reports-detail-col { flex: 1; }
+
+  /* Settings */
+  .setting-row { flex-wrap: wrap; row-gap: 6px; }
+  .setting-label { width: 100%; flex-basis: 100%; }
+}
+
+/* ── Phone (≤640px) ───────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Landing nav */
+  .lp-root .lp-nav { top: 12px; right: 12px; left: 12px; }
+  .lp-root .lp-nav-actions .lp-launch-btn { font-size: 9px; font-weight: 700; }
+
+  /* Landing hero: prevent overflow on 320–640px */
+  .lp-hero-inner {
+    grid-template-columns: 1fr !important;
+    padding: clamp(88px, 18vw, 120px) clamp(16px, 5vw, 24px) 80px !important;
+    gap: 0 !important;
+  }
+  .px-headline-wrap { width: 100%; max-width: 100%; overflow: hidden; }
+  .px-headline-canvas { width: 100% !important; max-width: 100% !important; }
+  .lp-hero-copy { padding-bottom: 8px; }
+  .lp-subtitle { margin: 20px 0 0; font-size: 10px; letter-spacing: 0.16em; }
+  .lp-hero-actions { flex-direction: column; align-items: stretch; }
+  .lp-hero-copy .lp-hero-actions .lp-primary-btn { min-width: 0; width: 100%; font-size: 10px; font-weight: 700; }
+  .lp-nav-actions .lp-download-btn { display: none; }
+
+  /* Hamburger toggle */
+  .sidenav-toggle {
+    display: inline-flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 5px;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 220;
+    width: 44px;
+    height: 44px;
+    background: rgba(8, 14, 13, 0.92);
+    border: 1px solid var(--border-2);
+    cursor: pointer;
+    padding: 0;
+  }
+  .sidenav-toggle span { display: block; width: 20px; height: 2px; background: var(--cyan); }
+
+  /* Scrim */
+  .sidenav-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 205;
+    background: rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .sidenav-scrim--show { opacity: 1; pointer-events: auto; }
+
+  /* Off-canvas drawer */
+  .sidenav {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 210;
+    width: min(280px, 84vw);
+    height: 100vh;
+    height: 100dvh;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.6);
+  }
+  .sidenav--open { transform: none; }
+  .sidenav--open .sidenav-logo { justify-content: flex-start; padding: 18px 16px 14px; }
+  .sidenav--open .sidenav-logo-text,
+  .sidenav--open .sidenav-status-label,
+  .sidenav--open .sidenav-label,
+  .sidenav--open .sidenav-badge,
+  .sidenav--open .sidenav-index { display: revert; }
+  .sidenav--open .sidenav-user-info { display: flex; }
+  .sidenav--open .sidenav-status-row { justify-content: flex-start; padding: 8px 14px 6px; }
+  .sidenav--open .sidenav-status-dot.ml-auto { margin-left: auto; }
+  .sidenav--open .sidenav-item { justify-content: flex-start; padding: 8px 14px 8px 16px; }
+  .sidenav--open .sidenav-user { justify-content: flex-start; padding: 12px 14px; }
+
+  /* Unfix page heights */
+  .page-mission, .page-detection, .page-camera,
+  .page-disturbances, .page-analytics, .page-reports,
+  .page-settings, .page-copilot, .mc-root, .mc2-root {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .fsoc-main { overflow-x: hidden; }
+  .camera-body { overflow-y: auto; height: auto; }
+  .page-camera { height: auto; }
+
+  /* Side columns → full-width */
+  .camera-control-col  { width: auto; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+  .dist-controls-col   { width: auto; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+  .copilot-context-col { width: auto; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; max-height: none; }
+  .copilot-chat-col    { min-height: 70vh; }
+  .reports-list-col    { border-right: 0; border-bottom: 1px solid var(--border); max-height: 46vh; }
+  .mc-stats-col        { min-height: 0; }
+  .mc2-body            { padding: 10px; gap: 10px; }
+  .mc2-viz             { min-height: 300px; }
+  .mc-feed-wrapper     { min-height: 300px; }
+  .detection-feed-col  { padding: 12px; }
+
+  /* Config grids single column */
+  .mc-cfg-params-grid { grid-template-columns: 1fr; }
+  .mc-cfg-input       { width: 100%; }
+  .mc-cfg-inner       { padding: 12px 14px; max-height: none; }
+  .mc-config-panel    { overflow: visible; }
+
+  /* Headers: clear hamburger */
+  .page-header, .mission-header, .mc-topbar, .mc2-header {
+    padding: 14px 16px 10px;
+    padding-left: 64px;
+  }
+  .mission-header       { flex-wrap: wrap; gap: 10px; }
+  .mc-start-group       { flex-wrap: wrap; }
+  .mc-btn-start         { flex: 1 1 100%; justify-content: center; }
+  .mc-video-name        { max-width: 100%; }
+  .mc2-entities         { padding-left: 64px; }
+  .mc2-mission-id       { white-space: normal; flex-wrap: wrap; }
+  .mc2-header-right     { flex-wrap: wrap; justify-content: flex-start; }
+  .mc2-twin-runcontrols { flex-wrap: wrap; }
+
+  /* In-viewport overlays */
+  .mc2-viz-controls { top: 8px; right: 8px; flex-wrap: wrap; max-width: calc(100% - 16px); gap: 4px; }
+  .mc2-toggles      { bottom: 8px; right: 8px; flex-wrap: wrap; max-width: calc(100% - 16px); gap: 4px; }
+  .mc2-viz-status   { top: 8px; left: 8px; }
+
+  /* Reports table: hide secondary columns */
+  .rl-col-dur, .rl-col-err, .rl-col-lock { display: none; }
+  .reports-list-header, .rl-row { padding: 8px 12px; }
+
+  /* Touch targets */
+  .cam-dpad-btn { width: 46px; height: 46px; }
+  .tel-panel-grid--2col { grid-template-columns: 1fr; }
+  .cop-input-row { padding: 10px 12px; }
+  .analytics-summary-row { padding: 10px 16px; }
+  .analytics-chart-card  { padding: 12px; }
+  .dist-param-label { width: 110px; }
+
+  /* Tracking overlay bars with inline styles */
+  .tracking-viewport > .viewport-toggle[style] { flex-wrap: wrap !important; row-gap: 6px; padding-left: 64px !important; }
+  .tracking-viewport > .viewport-toggle[style] > div { flex-wrap: wrap !important; row-gap: 4px; }
+  .tracking-viewport .viewport-toggle:not([style]) { top: 64px; max-width: calc(100% - 20px); flex-wrap: wrap; }
+
+  /* Settings full-width rows */
+  .setting-row { flex-wrap: wrap; row-gap: 6px; }
+  .setting-label { width: 100% !important; flex-basis: 100% !important; }
+  .setting-input-group { width: 100%; }
+
+  /* Overflow guards */
+  .rl-row, .reports-list-header { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  img, canvas, svg, video { max-width: 100%; }
+  .lp-launch-btn { min-width: 0 !important; }
+  .lp-primary-btn { min-width: 0 !important; width: 100%; }
+  .mc-cfg-input { max-width: 100%; }
+  .viewport-toggle { box-sizing: border-box; }
+
+  /* App shell: on mobile the sidenav is position:fixed (off-canvas),
+     so the shell must not clip the content area or impose 100vw. */
+  .fsoc-shell {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+    width: 100%;
+  }
+  .fsoc-main {
+    overflow-x: hidden;
+    overflow-y: auto;
+    min-height: 100vh;
+  }
+}
+
+/* ── Small phone (≤480px) ─────────────────────────────────── */
+@media (max-width: 480px) {
+  .page-header      { padding-top: 12px; padding-right: 12px; padding-bottom: 8px; }
+  .page-title       { font-size: 13px; }
+  .mc2-body         { padding: 8px; gap: 8px; }
+  .mc2-rail         { grid-template-columns: 1fr; }
+  .mc-topbar-right  { width: 100%; }
+  .mc-ws-pill       { width: 100%; justify-content: center; }
+  .mc-running-controls { flex-wrap: wrap; width: 100%; }
+  .mc-btn-ctrl      { flex: 1 1 auto; text-align: center; }
+  .mc-steps-grid    { grid-template-columns: 1fr; }
+  .viewport-toggle  { flex-wrap: wrap; max-width: calc(100% - 20px); }
+  .viewport-state-overlay { top: auto; bottom: 10px; right: 10px; }
+  .vstrip-item      { padding: 0 8px; }
+  .cop-messages     { padding: 12px; }
+  .settings-body    { padding: 12px 14px; }
+  .setting-number-input { width: 60px; }
+  .pid-label        { width: 88px; flex-basis: 88px; }
+  .lp-nav-inner     { gap: 10px; padding: 8px; }
+  .lp-nav-actions   { gap: 6px; }
+  .mc2-mission-id   { font-size: 10px; gap: 6px; }
+  .mc2-clock        { font-size: 10px; }
+  .reports-detail-col { padding: 12px; }
+  .dist-readout-block { padding: 10px 12px; }
+  .analytics-summary-row { flex-wrap: wrap; row-gap: 6px; }
+  .detection-info-col { padding-bottom: 16px; }
+  .mc2-viz          { min-height: 260px; }
+  .mc-feed-wrapper  { min-height: 260px; }
+  .vp-btn           { padding: 7px 10px; min-height: 36px; }
+  .mc2-btn          { padding: 7px 10px; }
+  .mc2-seg-btn      { padding: 8px 12px; }
+  .mc2-ent          { padding: 7px 10px; font-size: 10px; }
+  .mc2-entities-add { margin-left: 0; width: 100%; }
+  .mc2-entities     { gap: 8px; }
+}
+
+/* ── Very small phone (≤360px / 320px+) ──────────────────── */
+@media (max-width: 360px) {
+  .page-header, .mc2-header, .mc-topbar { padding-left: 58px !important; }
+  .lp-hero-inner { padding: 76px 14px 70px !important; }
+  .lp-subtitle { font-size: 9px; letter-spacing: 0.12em; }
+  .lp-launch-btn, .lp-primary-btn { font-size: 9px; padding: 8px 10px; gap: 8px; }
+  .sidenav { width: min(260px, 88vw); }
+  .mc-start-group, .mc-running-controls, .mc2-header-right,
+  .mc2-twin-runcontrols, .mc2-entities-row { flex-wrap: wrap; max-width: 100%; }
+  .state-pill { font-size: 8px; padding: 1px 4px; }
+  .tel-value, .mrow-val, .mc2-val {
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .setting-label { font-size: 9px; }
+  .cop-input-row  { flex-wrap: wrap; gap: 8px; }
+  .cop-input      { border-right: 1px solid var(--border-2) !important; flex: 1 1 100%; }
+  .cop-send-btn   { width: 100%; }
+  .dist-param-label { width: 90px; }
+  .mc2-card { padding: 10px 12px; }
+  .mc2-card-head { font-size: 10px; }
+}
+
+/* ── Desktop: hamburger + scrim always hidden ─────────────── */
+@media (min-width: 641px) {
+  .sidenav-toggle, .sidenav-scrim { display: none; }
+}
+
+/* ── Reduced motion ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sidenav, .sidenav-scrim { transition: none; }
+}

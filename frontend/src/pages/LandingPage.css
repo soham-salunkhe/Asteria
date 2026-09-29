@@ -345,11 +345,14 @@ a.lp-launch-btn, a.lp-primary-btn { text-decoration: none; }
   .lp-brand { gap: 8px; font-size: 10px; }
   .lp-brand small { display: none; }
   .system-mark--compact { width: 26px; height: 26px; }
+  /* min-width: 0 handled by responsive.css with !important */
   .lp-launch-btn { min-width: 0; min-height: 36px; gap: 10px; padding: 8px 12px; font-size: 9px; }
   .lp-nav-actions { gap: 8px; }
+  /* padding/grid handled by responsive.css for 320-640px range */
   .lp-hero-inner { padding: 104px 20px 96px; }
   .lp-subtitle { margin: 24px 0 0; font-size: 10px; }
-  .lp-primary-btn { min-width: 220px; min-height: 40px; font-size: 10px; }
+  /* min-width: 0 applied by responsive.css — just set height and font */
+  .lp-primary-btn { min-width: 0; min-height: 40px; font-size: 10px; }
   .lp-hero-footer { right: 18px; bottom: 16px; left: 18px; gap: 12px; font-size: 8px; }
   .lp-hero-footer > span:first-child { max-width: 230px; }
   .lp-footer-id { display: none; }
@@ -363,6 +366,17 @@ a.lp-launch-btn, a.lp-primary-btn { text-decoration: none; }
   .lp-access-section { flex-wrap: wrap; padding: 56px 0 62px; }
   .lp-access-section h2 { font-size: 15px; }
   .lp-access-section .lp-primary-btn { margin: 12px 0 0; }
+}
+
+/* Very small phone: 320–360px */
+@media (max-width: 360px) {
+  .lp-nav-inner { padding: 6px 8px; min-height: 52px; }
+  .lp-brand { font-size: 9px; gap: 6px; }
+  .system-mark--compact { width: 22px; height: 22px; }
+  .lp-launch-btn { padding: 7px 10px; font-size: 8px; }
+  .lp-hero-inner { padding: 72px 12px 60px !important; }
+  .lp-hero-copy { padding-bottom: 4px; }
+  .lp-dash { width: 28px; margin-bottom: 18px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
