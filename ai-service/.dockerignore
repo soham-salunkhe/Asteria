@@ -1,0 +1,11 @@
+# Local build outputs + caches — never part of the Space image
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.log
+.venv/
+venv/
+.env

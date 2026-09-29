@@ -12,6 +12,8 @@ __pycache__/
 
 # Build
 dist/
+ai-service/build/
+ai-service/dist/
 dist-ssr/
 dist-electron/
 release/
