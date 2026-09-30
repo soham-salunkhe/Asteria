@@ -1177,27 +1177,51 @@ class SimulationEngine:
     def delete_target(self, target_id: str) -> dict:
         """Remove an operator-added target (and its link/beacon entry).
 
-        Safety guards: the active tracking target and — while the loop is
-        live — the target driving it are refused. Otherwise the link entry
-        is dropped, the dict entry removed, and the loop pointer moved to
-        a remaining target (or cleared when idle with none left).
+        If the deleted target is currently driving the tracking loop,
+        gracefully transfer tracking to a remaining target if available.
+        At least one target is retained so the simulation loop stays valid.
         """
         if target_id not in self._targets:
             return {'success': False, 'error': f'Unknown target {target_id}'}
-        sess = self._active_tracking_session or {}
-        if sess.get('targetId') == target_id:
-            return {'success': False,
-                    'error': f'{target_id} is the active tracking target — switch tracking first'}
-        if (self._running and self._target is not None
-                and self._target.config.id == target_id):
-            return {'success': False,
-                    'error': f'{target_id} drives the live loop — stop the run first'}
 
+        remaining = [t for tid, t in self._targets.items() if tid != target_id]
+        if not remaining:
+            return {'success': False,
+                    'error': f'Cannot delete {target_id} — at least one target is required in the environment.'}
+
+        next_target = remaining[0]
+        next_tid = next_target.config.id
         link = self._target_links.pop(target_id, {})
         self._targets.pop(target_id, None)
+
         if self._target is not None and self._target.config.id == target_id:
-            self._target = next(iter(self._targets.values()), None)
+            self._target = next_target
             self._target_offset = Vec3(0.0, 0.0, 0.0)
+
+        sess = self._active_tracking_session or {}
+        if sess.get('targetId') == target_id:
+            next_link = self._target_links.get(next_tid, {})
+            self._active_tracking_session = {
+                'id': (sess.get('id', 0) or 0) + 1,
+                'targetId': next_tid,
+                'beaconId': next_link.get('beacon_id', f'BEACON-{next_tid}'),
+                'satelliteId': next_link.get('host_satellite_id', 'SAT-01'),
+                'cameraId': next_link.get('camera_id', 'FSOC-CAM-01'),
+            }
+            # Coarse slew to the next target
+            try:
+                t = next_target.position
+                b = next_target.config.beacon_offset
+                self._coarse_slew_to(Vec3(t.x + b.x, t.y + b.y, t.z + b.z))
+            except Exception:
+                pass
+            self._kalman.reset()
+            self._pid.reset()
+            self._target_state = 'SEARCHING'
+            self._search_duration = 0.0
+            self._reacquire_searched = False
+            self._emit_event('info', f'TRACK TRANSFERRED TO {next_tid}')
+
         self._emit_event('warning', f'TARGET REMOVED — {target_id}')
 
         return {'success': True, 'target_id': target_id,

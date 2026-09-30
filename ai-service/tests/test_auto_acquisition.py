@@ -99,3 +99,35 @@ def test_state_machine_target_lost_and_reacquired():
     eng._update_target_state(detected=False, pix_total=None, dt=0.033)
     
     assert eng._target_state == 'SEARCHING'
+
+
+def test_delete_active_tracking_target_transfers_track():
+    """Verify that deleting the active tracking target smoothly transfers tracking to remaining target."""
+    eng = SimulationEngine()
+    # Add a second target
+    res_add = eng.register_target('TARGET-02', {'x': 10.0, 'y': 5.0, 'z': 350.0})
+    assert res_add['success'] is True
+    assert len(eng._targets) >= 2
+
+    # Switch tracking to TARGET-02
+    res_switch = eng.switch_target('TARGET-02')
+    assert res_switch['success'] is True
+    assert eng._active_tracking_session['targetId'] == 'TARGET-02'
+
+    # Now delete TARGET-02 (the active tracking target)
+    res_del = eng.delete_target('TARGET-02')
+    assert res_del['success'] is True
+    assert 'TARGET-02' not in eng._targets
+    # Tracking session must have transferred to the remaining target
+    assert eng._active_tracking_session['targetId'] != 'TARGET-02'
+    assert eng._target.config.id != 'TARGET-02'
+
+
+def test_cannot_delete_last_target():
+    """Verify safety guard: cannot delete the only remaining target."""
+    eng = SimulationEngine()
+    # Keep only 1 target
+    first_id = next(iter(eng._targets.keys()))
+    res = eng.delete_target(first_id)
+    assert res['success'] is False
+    assert 'at least one target' in res['error']

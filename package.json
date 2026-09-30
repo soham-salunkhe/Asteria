@@ -25,8 +25,11 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.4",
-    "electron": "^33.2.1",
+    "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.3"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
   }
 }

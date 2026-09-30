@@ -54,6 +54,33 @@ The packaged application starts the required local services automatically. **No 
 
 ---
 
+## 💻 Running from Source (Developers)
+
+If cloning the repository from GitHub:
+
+### Option A: 1-Click Launcher (Windows)
+Double-click **`start.bat`** in the repository root. It starts all services automatically:
+- **Python Simulation Engine:** `http://localhost:8000`
+- **Node Backend Copilot Proxy:** `http://localhost:5001`
+- **Frontend Web App:** `http://localhost:5173`
+
+### Option B: Manual Terminal Launch
+1. **Python Tracking Engine:**
+   ```bash
+   cd ai-service
+   pip install -r requirements.txt
+   python -m uvicorn fsoc_main:app --host 127.0.0.1 --port 8000
+   ```
+2. **Frontend:**
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+3. Open **`http://localhost:5173`** and click **START DEMO** or **START CUSTOM**.
+
+---
+
 # 🛰️ What is ASTERIA?
 
 Free Space Optical Communication uses highly directional laser beams to transmit data between platforms such as satellites, UAVs and ground terminals.

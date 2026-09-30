@@ -77,6 +77,7 @@ interface SceneSettings {
   fov: boolean;
   trajectory: boolean;
   labels: boolean;
+  autoTrack: boolean;
 }
 
 const MOTION_MODES: MotionMode[] = ['static', 'straight', 'circular', 'figure8', 'random', 'spiral', 'sinusoidal'];
@@ -1850,7 +1851,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
       window.removeEventListener('resize', resizeThreeViewport);
     };
   }, [resizeThreeViewport]);
-  const [settings, setSettings] = useState<SceneSettings>({ brightness: 1, stars: true, fov: true, trajectory: true, labels: true });
+  const [settings, setSettings] = useState<SceneSettings>({ brightness: 1, stars: true, fov: true, trajectory: true, labels: true, autoTrack: true });
   const [objects, setObjects] = useState<SceneObjectDef[]>([]);
   const [entityGraph, setEntityGraph] = useState<SimulationEntity[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1990,7 +1991,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
       activeTrackingTargetId: activeSession?.targetId ?? liveTargetId,
     });
     setSelectedId(id);
-    if (id && simStatus === 'running') {
+    if (settings.autoTrack && id && simStatus === 'running') {
       const isTarget = id.startsWith('TARGET') || (frame?.targets ?? []).some((t) => (t.entity?.id ?? t.id) === id);
       if (isTarget && id !== liveTargetId && id !== activeSession?.targetId) {
         void trackBackendTarget(id);
@@ -2134,7 +2135,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
     // backend entry survives a visual delete (refusals explain why).
     const backendTid = resolveBackendTargetId();
     if (backendTid) { void deleteTargetFlow(backendTid); return; }
-    if (selectedId === 'SAT-01' || selectedId === 'FSOC-CAM-01' || selectedId === liveTargetId || selectedId === liveBeaconId) return;
+    if (selectedId === 'SAT-01' || selectedId === 'FSOC-CAM-01') return;
     const owner = objects.find((o) => o.id === selectedId || o.beaconId === selectedId);
     if (!owner) return;
     setObjects((p) => p.filter((o) => o.id !== owner.id));
@@ -2665,9 +2666,9 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
                   style={{ width: '100%' }}
                 />
               </div>
-              {(['stars', 'fov', 'trajectory', 'labels'] as const).map((k) => (
+              {(['stars', 'fov', 'trajectory', 'labels', 'autoTrack'] as const).map((k) => (
                 <label key={k} style={{ display: 'flex', justifyContent: 'space-between', cursor: 'pointer', textTransform: 'uppercase' }}>
-                  <span>{k === 'fov' ? 'FOV cone' : k}</span>
+                  <span>{k === 'fov' ? 'FOV cone' : k === 'autoTrack' ? 'Auto-Track on Select' : k}</span>
                   <input type="checkbox" checked={settings[k] as boolean} onChange={(e) => setS(k, e.target.checked)} />
                 </label>
               ))}
@@ -2992,6 +2993,46 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
 
             {/* Action Buttons: TRACK TARGET & FOCUS TARGET */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+              {/* Auto / Manual Mode Pill */}
+              {(selectedBackendTargetId || (selectedLocal && selectedLocal.kind === 'target')) && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '3px 6px', background: '#121e28', borderRadius: 3, border: '1px solid #1e3344', marginBottom: 2 }}>
+                  <span style={{ fontSize: 9, color: '#8d9195', fontWeight: 600 }}>TRACK MODE</span>
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    <button
+                      type="button"
+                      style={{
+                        ...chipBtn,
+                        fontSize: 8,
+                        padding: '2px 6px',
+                        backgroundColor: settings.autoTrack ? '#163828' : 'transparent',
+                        borderColor: settings.autoTrack ? '#4eb483' : '#2a3a46',
+                        color: settings.autoTrack ? '#8fe0b4' : '#6a8090',
+                        fontWeight: settings.autoTrack ? 700 : 400,
+                      }}
+                      onClick={() => setS('autoTrack', true)}
+                      title="Auto mode: targets auto-track upon selection"
+                    >
+                      AUTO
+                    </button>
+                    <button
+                      type="button"
+                      style={{
+                        ...chipBtn,
+                        fontSize: 8,
+                        padding: '2px 6px',
+                        backgroundColor: !settings.autoTrack ? '#3a2b16' : 'transparent',
+                        borderColor: !settings.autoTrack ? '#d99838' : '#2a3a46',
+                        color: !settings.autoTrack ? '#f0c070' : '#6a8090',
+                        fontWeight: !settings.autoTrack ? 700 : 400,
+                      }}
+                      onClick={() => setS('autoTrack', false)}
+                      title="Manual mode: select freely without tracking, track manually when ready"
+                    >
+                      MANUAL
+                    </button>
+                  </div>
+                </div>
+              )}
               {selectedBackendTargetId && !inspectedBackendEntry?.isBeacon && (
                 selectedBackendTargetId === (activeSession?.targetId ?? liveTargetId) ? (
                   <div
@@ -3007,7 +3048,7 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
                     }}
                     title={`${selectedBackendTargetId} is actively being tracked`}
                   >
-                    ✓ AUTO-TRACKING ACTIVE
+                    ✓ {settings.autoTrack ? 'AUTO-TRACKING ACTIVE' : 'TRACKING ACTIVE'}
                   </div>
                 ) : (
                   <button
