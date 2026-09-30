@@ -11,18 +11,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import type { TelemetryFrame, TargetState } from '../../types/fsoc';
 
-const STATE_COLOR: Record<TargetState, string> = {
-  READY: '#8a9ba0',
-  SEARCHING: '#faad14',
-  DETECTED: '#fadb14',
-  ACQUIRING: '#faad14',
-  TRACKING: '#52c41a',
-  LOCKED: '#52c41a',
-  LOST: '#ff4d4f',
-  REACQUIRING: '#fa8c16',
-  ERROR: '#ff4d4f',
-};
-
 interface Props {
   frame: TelemetryFrame | null;
   width?: number;
@@ -123,7 +111,6 @@ export function CameraFeed({
     const isVideoMode = frame?.source === 'video_input' || videoUploadPending;
     const displayFrame = isVideoMode ? renderedVideo?.frame ?? null : frame;
     const state = (displayFrame?.target_state ?? 'READY') as TargetState;
-    const stateColor = STATE_COLOR[state] ?? '#8a9ba0';
     const isLocked = state === 'LOCKED' || state === 'TRACKING';
     const videoReady = isVideoMode && !!renderedVideo?.image?.naturalWidth;
 
@@ -270,9 +257,6 @@ export function CameraFeed({
     ctx.save();
     ctx.font = 'bold 11px ui-monospace, monospace';
     ctx.textAlign = 'right';
-    ctx.fillStyle = stateColor;
-    ctx.fillText(`● ${state}`, W - 14, 22);
-    ctx.restore();
 
     // ── 7. Optional Debug Mode: Candidate Visualization ────────
     if (debugMode && displayFrame?.candidates) {

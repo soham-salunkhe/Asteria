@@ -1990,6 +1990,12 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
       activeTrackingTargetId: activeSession?.targetId ?? liveTargetId,
     });
     setSelectedId(id);
+    if (id && simStatus === 'running') {
+      const isTarget = id.startsWith('TARGET') || (frame?.targets ?? []).some((t) => (t.entity?.id ?? t.id) === id);
+      if (isTarget && id !== liveTargetId && id !== activeSession?.targetId) {
+        void trackBackendTarget(id);
+      }
+    }
   };
 
   const setS = (k: keyof SceneSettings, v: number | boolean) => setSettings((p) => ({ ...p, [k]: v }));
@@ -2987,23 +2993,41 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
             {/* Action Buttons: TRACK TARGET & FOCUS TARGET */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
               {selectedBackendTargetId && !inspectedBackendEntry?.isBeacon && (
-                <button
-                  style={{
-                    ...chipBtn,
-                    pointerEvents: 'auto',
-                    backgroundColor: '#1b382d',
-                    borderColor: '#4eb483',
-                    color: '#8fe0b4',
-                    fontWeight: 600,
-                    textAlign: 'center',
-                    padding: '6px 8px',
-                  }}
-                  disabled={switching}
-                  onClick={() => void trackBackendTarget(selectedBackendTargetId)}
-                  title={`Track ${selectedBackendTargetId} (resolves beacon → satellite → camera)`}
-                >
-                  {switching ? 'SWITCHING…' : '🎯 TRACK TARGET'}
-                </button>
+                selectedBackendTargetId === (activeSession?.targetId ?? liveTargetId) ? (
+                  <div
+                    style={{
+                      ...chipBtn,
+                      backgroundColor: '#163828',
+                      borderColor: '#4eb483',
+                      color: '#8fe0b4',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      padding: '6px 8px',
+                      cursor: 'default',
+                    }}
+                    title={`${selectedBackendTargetId} is actively being tracked`}
+                  >
+                    ✓ AUTO-TRACKING ACTIVE
+                  </div>
+                ) : (
+                  <button
+                    style={{
+                      ...chipBtn,
+                      pointerEvents: 'auto',
+                      backgroundColor: '#1b382d',
+                      borderColor: '#4eb483',
+                      color: '#8fe0b4',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      padding: '6px 8px',
+                    }}
+                    disabled={switching}
+                    onClick={() => void trackBackendTarget(selectedBackendTargetId)}
+                    title={`Track ${selectedBackendTargetId} (resolves beacon → satellite → camera)`}
+                  >
+                    {switching ? 'SWITCHING…' : '🎯 TRACK TARGET'}
+                  </button>
+                )
               )}
               {selectedLocal && selectedLocal.kind === 'target' && !selectedBackendTargetId && (
                 <button

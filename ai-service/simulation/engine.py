@@ -227,6 +227,14 @@ class SimulationEngine:
         # before the estimate is dropped and the search sweep takes over.
         self._coast_frames = 30
 
+        # Automatic acquisition & internal search timeout (never exposed in UI)
+        self._search_duration = 0.0
+        self._search_timeout_s = 3.5
+        self._acquiring_frames = 0
+        self._min_acquiring_frames = 12
+        self._reacquire_wait_time = 0.8
+        self._reacquire_searched = False
+
         # Demo-mode phase tracking
         self._demo_mode = False
         self._demo_phase = 0
@@ -517,10 +525,21 @@ class SimulationEngine:
                 self._emit_event('info',
                                  f'INITIAL CUE → {self._target.config.id} '
                                  f'(Δpan {tot_pan:+.1f}° Δtilt {tot_tilt:+.1f}°)')
+                # In demo mode, apply a small initial sweep offset so the gimbal
+                # actively sweeps into the target to demonstrate the acquisition progression:
+                # SEARCHING → ACQUIRING → TRACKING → TARGET LOCKED
+                if demo_mode:
+                    self._camera.apply_correction(-2.2, 0.4, 0.1)
             except Exception:
                 pass
             self._search_pan0 = self._camera.pan
             self._search_tilt0 = self._camera.tilt
+
+        self._search_duration = 0.0
+        self._acquiring_frames = 0
+        self._reacquire_searched = False
+        self._missed_frames = 0
+        self._lock_count = 0
 
         # Create run record in DB
         self._run_id = db.create_run(
@@ -1245,6 +1264,9 @@ class SimulationEngine:
         self._missed_frames = 0
         self._lock_count = 0
         self._search_t = 0.0
+        self._search_duration = 0.0
+        self._acquiring_frames = 0
+        self._reacquire_searched = False
         self._acq_started = False
         self._target_state = 'SEARCHING'
         self._kalman.reset()
@@ -1571,7 +1593,7 @@ class SimulationEngine:
                 self._slew_toward(sweep_pan, sweep_tilt, dt)
 
             # ── State machine (detection + pixel error) ────────
-            self._update_target_state(detection is not None, pix_total)
+            self._update_target_state(detection is not None, pix_total, dt)
 
             # ── Metrics ────────────────────────────────────
             t1 = time.perf_counter()
@@ -1716,71 +1738,103 @@ None,
     # LOCK_FRAMES_REQUIRED consecutive frames — never forced.
 
     def _update_target_state(self, detected: bool,
-                             pix_total: Optional[float]) -> None:
+                             pix_total: Optional[float],
+                             dt: float = 0.033) -> None:
         prev = self._target_state
 
         if detected and pix_total is not None:
-            if pix_total <= self.TARGET_LOCK_THRESHOLD_PX:
-                self._lock_count += 1
-            else:
-                self._lock_count = 0
-            if self._lock_count >= self.LOCK_FRAMES_REQUIRED:
-                new = 'LOCKED'
-            elif pix_total <= self.TARGET_LOCK_THRESHOLD_PX:
-                new = 'TRACKING'
-            elif pix_total <= self.ACQUIRING_THRESHOLD_PX:
+            self._search_duration = 0.0
+            self._reacquire_searched = False
+
+            if prev in ('SEARCHING', 'REACQUIRING'):
+                # Target newly detected from search: progress through ACQUIRING
                 new = 'ACQUIRING'
+                self._acquiring_frames = 0
+                self._lock_count = 0
+            elif prev == 'ACQUIRING':
+                self._acquiring_frames += 1
+                if self._acquiring_frames >= self._min_acquiring_frames:
+                    new = 'TRACKING'
+                else:
+                    new = 'ACQUIRING'
+            elif prev == 'LOCKED':
+                # Target was already locked
+                if pix_total <= self.TARGET_LOCK_THRESHOLD_PX:
+                    new = 'LOCKED'
+                else:
+                    # User moved the target: automatically detect movement and continue tracking immediately.
+                    # Do not restart initial acquisition.
+                    self._lock_count = 0
+                    new = 'TRACKING'
+                    self._emit_event('info', 'TARGET MOVEMENT DETECTED — TRACKING')
             else:
-                new = 'DETECTED'
+                # prev is TRACKING, DETECTED, etc.
+                if pix_total <= self.TARGET_LOCK_THRESHOLD_PX:
+                    self._lock_count += 1
+                else:
+                    self._lock_count = 0
+                if self._lock_count >= self.LOCK_FRAMES_REQUIRED:
+                    new = 'LOCKED'
+                else:
+                    new = 'TRACKING'
         else:
             self._lock_count = 0
+            self._acquiring_frames = 0
+
             # Coast-to-sweep handover: after ~1 s without measurements the
-            # Kalman prediction is stale. Drop it so the SEARCHING sweep
-            # (mx=None path) takes over instead of the PID chasing a
-            # diverging prediction forever while Kalman stays initialized
-            # (which would also starve the sweep and make LOST unreachable).
+            # Kalman prediction is stale. Drop it so the SEARCHING sweep takes over.
             if (self._missed_frames > self._coast_frames
                     and self._kalman.is_initialized):
                 self._kalman.reset()
                 self._pid.reset()
-            if self._missed_frames > self._lost_frames_threshold:
-                # One acquisition episode = one expanding sweep with a fixed
-                # anchor and monotonically advancing phase/dwells. Restarting
-                # mid-episode would trap the scan in the small-amplitude
-                # regime (and random-walk the anchor), so a beacon outside
-                # the initial segment — e.g. behind the camera — could never
-                # be found. Only a FRESH loss re-anchors and restarts.
-                if prev in ('LOST', 'REACQUIRING', 'SEARCHING'):
-                    new = prev
-                    self._missed_frames = 0
+
+            if prev == 'SEARCHING':
+                self._search_duration += dt
+                if self._search_duration >= self._search_timeout_s:
+                    # Search timeout reached: enter REACQUIRING without exposing duration to UI
+                    new = 'REACQUIRING'
+                    self._search_duration = 0.0
+                    self._reacquire_start_time = self._elapsed
+                    self._reacquire_searched = False
+                    self._emit_event('warning', 'SEARCH TIMEOUT — REACQUIRING')
                 else:
-                    new = 'LOST'
-                    self._missed_frames = 0
-                    self._kalman.reset()  # stale estimate is worthless
-                    self._pid.reset()     # avoid windup-driven re-loss
-                    # Fresh loss episode: anchor the expanding sweep on the
-                    # last-known pointing and restart it as a local scan.
+                    new = 'SEARCHING'
+
+            elif prev in ('LOST', 'REACQUIRING'):
+                reacquire_duration = self._elapsed - self._reacquire_start_time
+                if reacquire_duration >= self._reacquire_wait_time and not self._reacquire_searched:
+                    # AUTOMATIC SEARCH AGAIN:
+                    # Re-anchor the camera search pattern toward target's current position
+                    if self._target is not None:
+                        try:
+                            t = self._target.position
+                            b = self._target.config.beacon_offset
+                            o = self._target_offset
+                            self._coarse_slew_to(Vec3(t.x + b.x + o.x, t.y + b.y + o.y, t.z + b.z + o.z))
+                        except Exception:
+                            pass
                     self._search_pan0 = self._camera.pan
                     self._search_tilt0 = self._camera.tilt
                     self._search_t = 0.0
-                    self._reacquire_start_time = self._elapsed
-            elif prev in ('LOST', 'REACQUIRING'):
-                # Check for REACQUIRING timeout
-                reacquire_duration = self._elapsed - self._reacquire_start_time
-                if reacquire_duration > self.REACQUIRE_TIMEOUT_SECONDS:
-                    # SAFETY timeout (catastrophic failure only): return to
-                    # SEARCHING and DROP the pending PS169 reacquisition
-                    # measurement so it is never reported as a successful
-                    # <= 1 s reacquisition. A fresh LOST starts a new window.
+                    self._search_duration = 0.0
+                    self._reacquire_searched = True
                     new = 'SEARCHING'
-                    self._metrics._reacq_start = None
-                    self._emit_event('warning', f'REACQUIRE SAFETY TIMEOUT — RETURNING TO SEARCHING ({self.REACQUIRE_TIMEOUT_SECONDS:.0f}s, NOT a PS169 reacquisition)')
+                    self._emit_event('info', 'AUTOMATIC SEARCH RESTARTED')
                 else:
-                    # Active reacquisition: stay in REACQUIRING until detection
                     new = 'REACQUIRING'
+
             elif prev in ('LOCKED', 'TRACKING', 'ACQUIRING', 'DETECTED'):
+                # Target was actively tracked/locked and is temporarily lost:
+                # Enter REACQUIRING and automatically search again
                 new = 'REACQUIRING'
                 self._reacquire_start_time = self._elapsed
+                self._reacquire_searched = False
+                self._search_pan0 = self._camera.pan
+                self._search_tilt0 = self._camera.tilt
+                self._search_t = 0.0
+                self._kalman.reset()
+                self._pid.reset()
+                self._emit_event('warning', 'TARGET LOST — REACQUIRING…')
             else:
                 new = 'SEARCHING'
 
@@ -1789,12 +1843,13 @@ None,
             # Track acquisition windows for event reporting
             if new == 'ACQUIRING' and not self._acq_started:
                 self._acq_started = True
+                self._emit_event('info', 'TARGET DETECTED')
                 self._emit_event('info', 'ACQUISITION STARTED')
             if new in ('LOST', 'SEARCHING'):
                 self._acq_started = False
             state_events = {
                 'SEARCHING': ('info', 'SEARCHING FOR BEACON'),
-                'DETECTED': ('info', 'BEACON DETECTED'),
+                'DETECTED': ('info', 'TARGET DETECTED'),
                 'ACQUIRING': ('info', 'TARGET ACQUIRING'),
                 'TRACKING': ('success', 'TRACKING STARTED'),
                 'LOCKED': ('success', 'LOCK ACQUIRED — ERROR ≤ 10 PX'),
@@ -1803,7 +1858,8 @@ None,
             }
             if new in state_events:
                 lvl, msg = state_events[new]
-                self._emit_event(lvl, msg)
+                if not (new == 'ACQUIRING' and self._acq_started):
+                    self._emit_event(lvl, msg)
             if prev in ('READY', 'SEARCHING', 'DETECTED', 'ACQUIRING') and new == 'TRACKING':
                 self._emit_event('success', 'ACQUISITION COMPLETE')
             if prev in ('REACQUIRING', 'LOST') and new in ('TRACKING', 'LOCKED'):
