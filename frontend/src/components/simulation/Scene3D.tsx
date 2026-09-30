@@ -2051,21 +2051,30 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
         spawnedAt: now,
       };
       
-      // Register with backend
+      // Register with backend. Gentle motion (not the engine's 80m
+      // sinusoidal default): a fresh target must stay near its drop
+      // point — inside the camera FOV region — so the gizmo can park
+      // it and TRACK can acquire it. Max drift ≈ 2.8 m/s.
       try {
-        await fsocApi.registerTarget(def.displayLabel, {
+        const res = await fsocApi.registerTarget(def.displayLabel, {
           x: simX,
           y: simY,
           z: simZ,
           trajectory: 'sinusoidal',
+          amplitude_h: 8.0,
+          amplitude_v: 4.0,
+          period: 18.0,
           satellite_id: def.hostId,
           camera_id: def.cameraId,
           beacon_size_px: 10.0,
           beacon_shape: 'square',
-        });
+        }) as { success: boolean; error?: string };
+        // The endpoint answers 200 + success:false on name collisions —
+        // must not silently continue as if the backend owns the target.
+        if (!res.success) throw new Error(res.error ?? 'registration refused');
         await refreshEntityGraph();
       } catch (e) {
-        console.error('Failed to register target with backend', e);
+        alert(`CREATE TARGET FAILED\n${e instanceof Error ? e.message : e}`);
       }
       
       setObjects((p) => [...p, def]);
@@ -2238,8 +2247,15 @@ export default function Scene3D({ frame, history, minimalChrome = false, onTwinA
       trackingTargetId: activeSession?.targetId ?? liveTargetId,
       trackingState: frame?.target_state ?? null,
     });
-    void fsocApi.moveTarget(id, simPos).catch((e) => {
-      console.error('Failed to move target', e);
+    void fsocApi.moveTarget(id, simPos).then((res) => {
+      // Backend refusals (e.g. target deleted by a run reset) resolve
+      // with HTTP errors or success:false — never fail silently, or the
+      // gizmo looks dead while the backend never moved anything.
+      if (!res.success) {
+        alert(`MOVE FAILED\n${id} was not moved. The run may have been reset — re-create the target and try again.`);
+      }
+    }).catch((e) => {
+      alert(`MOVE FAILED\n${e instanceof Error ? e.message : e}`);
     });
   };
 

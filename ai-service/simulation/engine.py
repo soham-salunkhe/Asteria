@@ -459,17 +459,14 @@ class SimulationEngine:
             await self.stop()
 
         self._apply_config(config or {})
-        # Fresh run = fresh scene: drop targets/links left over from
-        # previous runs so stale duplicates can never survive into the
-        # new scenario (only the newly configured primary is kept).
-        primary_id = self._target.config.id if self._target else None
-        stale = [t for t in self._targets if t != primary_id]
-        for t in stale:
-            self._targets.pop(t, None)
-            self._target_links.pop(t, None)
-        if stale:
-            self._emit_event('info',
-                             f'SCENARIO REBUILT — cleared stale: {", ".join(sorted(stale))}')
+        # Operator-created targets survive across runs: the UI offers a
+        # multi-target workflow (+ TARGET, TRACK, entity graph, per-target
+        # delete guards) and the loop only ever drives the primary
+        # (self._target). Deleting the others here is what made
+        # "create then START" lose the new target (2D never showed it)
+        # and broke gizmo moves with 'Unknown target'. Stale-name
+        # protection already lives in the register/switch namespace
+        # guards, so there is nothing to purge.
         self._reset_state()
         # PS169 startup parameter validation — fail loudly, never silently
         # correct invalid values.
