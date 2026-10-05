@@ -74,6 +74,7 @@ type PlatformMotion = typeof PLATFORM_MOTIONS[number];
 // ── Single consistent status language ─────────────────────────
 const STATUS_META: Record<TargetState, { label: string; color: string }> = {
   READY:       { label: 'READY',         color: '#8d9195' },
+  STANDBY:     { label: 'STANDBY',       color: '#7a889b' },
   SEARCHING:   { label: 'SEARCHING',     color: '#e39a32' },
   DETECTED:    { label: 'DETECTED',      color: '#f0b35a' },
   ACQUIRING:   { label: 'ACQUIRING',     color: '#e39a32' },

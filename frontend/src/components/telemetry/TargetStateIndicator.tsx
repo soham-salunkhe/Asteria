@@ -7,6 +7,7 @@ import type { TargetState } from '../../types/fsoc';
 
 const STATE_CONFIG: Record<TargetState, { label: string; color: string; pulse: boolean }> = {
   READY:       { label: 'READY',          color: '#626a6d', pulse: false },
+  STANDBY:     { label: 'STANDBY',        color: '#7a889b', pulse: false },
   SEARCHING:   { label: 'SEARCHING…',     color: '#e39a32', pulse: true  },
   DETECTED:    { label: 'DETECTED',       color: '#f0b35a', pulse: false },
   ACQUIRING:   { label: 'ACQUIRING…',     color: '#f0b35a', pulse: true  },

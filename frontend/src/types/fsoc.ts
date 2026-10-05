@@ -7,8 +7,11 @@
 
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'stopped' | 'error';
 
+export type TrackMode = 'AUTO' | 'MANUAL';
+
 export type TargetState =
   | 'READY'
+  | 'STANDBY'
   | 'SEARCHING'
   | 'DETECTED'
   | 'ACQUIRING'
@@ -287,6 +290,8 @@ export interface TelemetryFrame {
 
   sim_status: SimulationStatus;
   target_state: TargetState;
+  /** Authoritative single-source-of-truth track mode ('AUTO' | 'MANUAL') */
+  track_mode: TrackMode;
 
   target: TargetState3D;
   /** Multiple targets when multi-target mode is active */

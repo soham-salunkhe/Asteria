@@ -58,7 +58,11 @@ export const fsocApi = {
   endDemo: () => post('/api/simulation/end_demo'),
 
   getStatus: () =>
-    get<{ status: string; run_id: string | null }>('/api/simulation/status'),
+    get<{ status: string; run_id: string | null; track_mode: string }>('/api/simulation/status'),
+
+  // Track mode: 'AUTO' | 'MANUAL' — authoritative single source of truth
+  setTrackMode: (mode: 'AUTO' | 'MANUAL') =>
+    post<{ success: boolean; track_mode: string; prev: string }>('/api/simulation/set_track_mode', { mode }),
 
   // Configuration
   updateDisturbances: (config: unknown) =>

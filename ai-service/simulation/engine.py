@@ -250,10 +250,44 @@ class SimulationEngine:
         self._manual_hold_until: float = 0.0
         self._manual_hold_s: float = 8.0
 
+        # Track mode: authoritative single source of truth
+        # AUTO — simulation auto-resolves tracking on start
+        # MANUAL — operator must explicitly call switch_target
+        self._track_mode: str = 'AUTO'
+
     # ── Public API ────────────────────────────────────────────
 
     def set_broadcast(self, fn: Callable[[dict], Awaitable[None]]) -> None:
         self._broadcast = fn
+
+    def set_track_mode(self, mode: str) -> dict:
+        """Set the tracking mode. 'AUTO' or 'MANUAL'.
+
+        AUTO: simulation auto-resolves target → beacon → camera on start;
+              acquisition begins immediately without operator action.
+        MANUAL: operator must explicitly call switch_target to begin tracking;
+                target_state will be 'STANDBY' until tracking is initiated.
+        """
+        if mode not in ('AUTO', 'MANUAL'):
+            return {'success': False, 'error': f'Invalid mode: {mode!r}. Must be AUTO or MANUAL.'}
+        prev = self._track_mode
+        self._track_mode = mode
+        # In MANUAL mode, if we're currently SEARCHING/ACQUIRING without operator
+        # action, drop back to STANDBY so the operator controls when to start.
+        if mode == 'MANUAL' and self._target_state in ('SEARCHING', 'READY'):
+            self._target_state = 'STANDBY'
+            self._kalman.reset()
+            self._pid.reset()
+            self._emit_event('info', 'TRACK MODE → MANUAL — press TRACK TARGET to begin')
+        elif mode == 'AUTO' and self._target_state == 'STANDBY':
+            # Switching back to AUTO: resume acquisition
+            self._target_state = 'SEARCHING'
+            self._search_duration = 0.0
+            self._reacquire_searched = False
+            self._emit_event('info', 'TRACK MODE → AUTO — resuming acquisition')
+        else:
+            self._emit_event('info', f'TRACK MODE → {mode}')
+        return {'success': True, 'track_mode': self._track_mode, 'prev': prev}
 
     def register_target(self, target_id: str, config: Optional[dict] = None) -> dict:
         """Register a new target with the backend engine.
@@ -557,8 +591,27 @@ class SimulationEngine:
                          f'TARGET CREATED — {tc.id} · {tc.trajectory.upper()} · '
                          f'BEACON {tc.beacon_shape.upper()} {tc.beacon_size_px:.0f}px')
         self._emit_event('info', 'TARGET MOTION STARTED')
-        self._target_state = 'SEARCHING'
-        self._emit_event('info', 'SEARCHING FOR BEACON…')
+
+        if self._track_mode == 'AUTO':
+            # AUTO mode: resolve target → beacon → satellite → camera and
+            # immediately begin acquisition. No operator action needed.
+            link = self._target_links.get(self._target.config.id, {})
+            self._tracking_session_id += 1
+            self._active_tracking_session = {
+                'id': self._tracking_session_id,
+                'targetId': self._target.config.id,
+                'beaconId': link.get('beacon_id', f'BEACON-{self._target.config.id.split("-")[-1]}'),
+                'satelliteId': link.get('satellite_id', 'SAT-01'),
+                'cameraId': link.get('camera_id', 'FSOC-CAM-01'),
+            }
+            self._target_state = 'SEARCHING'
+            self._emit_event('info', f'AUTO MODE — tracking {self._target.config.id}')
+            self._emit_event('info', 'SEARCHING FOR BEACON…')
+        else:
+            # MANUAL mode: wait for operator to press TRACK TARGET
+            self._target_state = 'STANDBY'
+            self._emit_event('info', 'MANUAL MODE — select a target and press TRACK TARGET')
+
         return self._run_id
 
     async def stop(self) -> None:
@@ -1714,6 +1767,7 @@ None,
                     'sim_status': self.status,
                     'source': 'virtual',
                     'target_state': self._target_state,
+                    'track_mode': self._track_mode,
                     'target': target_dict,
                     'tracking_session': self._active_tracking_session,
                     'targets': targets_list,
@@ -1765,6 +1819,11 @@ None,
                              pix_total: Optional[float],
                              dt: float = 0.033) -> None:
         prev = self._target_state
+
+        # STANDBY: MANUAL mode hasn't started a tracking session yet.
+        # Hold this state until switch_target is called.
+        if prev == 'STANDBY':
+            return
 
         if detected and pix_total is not None:
             self._search_duration = 0.0

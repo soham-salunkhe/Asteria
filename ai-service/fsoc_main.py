@@ -177,6 +177,10 @@ class DeleteSatelliteRequest(BaseModel):
     satellite_id: str
 
 
+class SetTrackModeRequest(BaseModel):
+    mode: str  # 'AUTO' | 'MANUAL'
+
+
 class ScenarioCreateRequest(BaseModel):
     name: str
     description: str = ''
@@ -237,7 +241,23 @@ def get_status():
     return {
         'status': engine.status,
         'run_id': engine.run_id,
+        'track_mode': engine._track_mode,
     }
+
+
+@app.post('/api/simulation/set_track_mode')
+def set_track_mode(req: SetTrackModeRequest):
+    """Switch between AUTO and MANUAL tracking modes.
+
+    AUTO — simulation acquires the current target immediately on start;
+    no operator action required.
+    MANUAL — target_state held at STANDBY until the operator triggers tracking
+    via /api/simulation/track (or the frontend TRACK TARGET button).
+    """
+    result = engine.set_track_mode(req.mode)
+    if not result.get('success'):
+        raise HTTPException(400, result.get('error', 'Invalid mode'))
+    return result
 
 
 # ── Configuration endpoints ───────────────────────────────────
